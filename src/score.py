@@ -104,6 +104,8 @@ def statistics(y, preds, probs, boxq, conds):
     for c in conds:
         for k, v in macro(finding_metrics(y, preds[c], probs[c])).items():
             out[(c, k)] = v
+            if "alone" in conds and c != "alone":
+                out[(c, f"d_{k}_vs_alone")] = v - out[("alone", k)]
         for ref in ("alone", "look_again"):
             if ref in conds and c != ref:
                 out[(c, f"net_vs_{ref}")] = changes(y, preds[ref], preds[c])["net"]
@@ -191,6 +193,14 @@ def write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_fin
     for c in conds:
         lines.append(f"| {LABEL[c]} | " + " | ".join(fmt_ci(point[(c, k)], ci[(c, k)]) for k in METRICS) + " |")
 
+    if "alone" in conds:
+        lines += ["", "**Change from A (paired 95% CI)**", "", "| Condition | Sensitivity | Specificity | F1 | AUROC |",
+                  "|---|---|---|---|---|"]
+        for c in conds:
+            if c != "alone":
+                lines.append(f"| {LABEL[c]} | " + " | ".join(
+                    fmt_ci(point[(c, f'd_{k}_vs_alone')], ci[(c, f'd_{k}_vs_alone')]) for k in METRICS) + " |")
+
     lines += ["", "## Answer changes vs A (alone) and vs B (look_again)", "",
               "Counted over images x findings. fixed = FN→TP, added = TN→FP (new false alarm), "
               "net = fixed − added; lost = TP→FN, cleared = FP→TN.", ""]
@@ -238,6 +248,10 @@ def write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_fin
               f"- Reader: {rel['reader']}", f"- Helper: {rel['helper']}",
               f"- Helper real boxes per image (before padding): {summary['helper_real_boxes']}",
               f"- Tokens: {summary['tokens']}; cost of all requests: ${summary['cost_usd_all_requests']}", ""]
+    # Hand-written observations live in observations.md so rescoring doesn't erase them.
+    notes = Path(cfg["output_dir"]) / "observations.md"
+    if notes.exists():
+        lines += [notes.read_text()]
     return "\n".join(lines)
 
 

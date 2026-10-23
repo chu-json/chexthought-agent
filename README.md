@@ -123,6 +123,13 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
 
 ## Ideas for later
 
+From v0 (`outputs/v0/results.md`):
+- A helper that flags likely *over-calls* (the reader had 180 false positives vs 40 misses on 100 images).
+- An `xhigh`-effort reader as its own condition, to get reasoning traces (medium used no thinking at all).
+- Say in the prompt whether external ECG leads count as Support Devices (most Support Devices false positives cite them).
+- Repeat samples per condition to measure how much answers change between identical requests.
+
+Earlier ideas:
 - Box-mask IoU as a further box-quality measure.
 - Prompt caching for the shared image prefix, and the Batch API (50% cheaper) for large runs.
 - Structured outputs (JSON schema) instead of prompt-only JSON, once other backends are in play.
