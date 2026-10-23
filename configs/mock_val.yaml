@@ -1,0 +1,39 @@
+# Mock backend on 10 val images: exercises the whole pipeline without API calls.
+name: mock_val
+data_root: ~/data/chexlocalize
+split: val
+n_images: 10
+sample_seed: 0
+min_positives_per_finding: 10   # stratification: take up to this many positives per finding first
+exclude_ids: []
+image_long_edge: 1024           # images sent to APIs are resized so the long edge is this many px
+box_seed: 0
+conditions: [alone, look_again, random_boxes, checklist_boxes, helper_boxes, oracle_boxes]
+
+reader:
+  backend: mock
+  model: mock
+  max_tokens: 8000
+  thinking: adaptive            # adaptive | between_tools (between_tools = no extended thinking)
+  effort: low                   # low | medium | high | xhigh | max
+  temperature: null             # Claude models reject sampling parameters; null = API default
+
+helper:
+  backend: mock
+  model: mock
+  max_tokens: 8000
+  thinking: adaptive
+  effort: low
+  temperature: null
+  box_format: pixel             # coordinates the helper is asked for; converted in boxes.to_norm
+
+concurrency: 4
+requests_per_minute: 6000
+max_usd: 1                      # stop the run once new spend reaches this
+prices_per_mtok:                # USD per million tokens, for cost logging and the max_usd cap
+  claude-sonnet-5-5: {input: 2.0, output: 10.0}
+  mock: {input: 0.0, output: 0.0}
+
+cache_dir: outputs/cache
+output_dir: outputs/mock_val
+bootstrap: {n: 1000, seed: 0}

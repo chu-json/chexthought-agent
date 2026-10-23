@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Data and outputs (research use agreement: never commit images or labels)
+data/
+outputs/
+cache/
+*.jpg
+*.jpeg
+*.png
+*.dcm
+*.csv
+*.pkl
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

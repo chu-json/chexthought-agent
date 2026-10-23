@@ -1,0 +1,11 @@
+anthropic>=2.1
+numpy
+pandas
+pillow>=10.1
+pycocotools
+python-dotenv
+pyyaml
+scipy
+matplotlib
+pytest
+# openai  # only needed for the openai / openai_compatible backends
