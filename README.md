@@ -63,6 +63,20 @@ Every response is cached under `outputs/cache/`, keyed by (model, role, conditio
 prompt hash covers the prompt text, image pixels and model settings. Reruns are free and interrupted runs resume.
 A run stops once new spend reaches `max_usd`.
 
+**Long runs (overnight, flaky wifi):**
+
+```bash
+nohup caffeinate -is .venv/bin/python -m src.run --config configs/v0.yaml --until-done >> outputs/v0_run.log 2>&1 &
+tail -f outputs/v0_run.log      # progress every 25 requests; safe to close the terminal
+```
+
+- `caffeinate -is` keeps the Mac awake while the run is alive (`-s` only applies on AC power). Closing a MacBook's lid
+  still sleeps it unless an external display is attached.
+- Lost wifi or a sleeping laptop: the affected requests fail and are not cached. `--until-done` reruns them after
+  1, 2, 4, ... up to 15 minutes, until none are left. Request errors (4xx) stop the run instead of looping.
+- Laptop shut down or process killed: run the same command again. Finished requests come from the cache (each is
+  written atomically), so nothing is paid for twice.
+
 Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `backends`, `run`, `score`, `viz`,
 `verify_data`), `tests/`, `outputs/` (gitignored).
 
@@ -73,7 +87,8 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
   sometimes returns broken JSON or a refusal on purpose).
 - **Temperature can't be fixed on Claude:** current Claude models reject `temperature`/`top_p`/`top_k`, so the
   config sets `temperature: null` (API default) and logs it. Thinking (`adaptive` or `between_tools` = none) and
-  `effort` are fixed in the config and logged with every call.
+  `effort` are fixed in the config and logged with every call. v0 uses adaptive thinking at `medium` effort:
+  at `low`, the model skipped thinking on all 35 dry-run calls.
 - **Helper coordinates:** Claude is asked for pixel coordinates on the image it sees (its native format), and
   `boxes.to_norm` converts them to normalized [0,1] (x1, y1, x2, y2). All other box math is normalized.
   Formats `norm`, `norm1000` (Qwen3-VL) and `yxyx1000` (Gemma/MedGemma) are also supported and tested.

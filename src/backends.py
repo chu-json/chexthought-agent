@@ -66,7 +66,8 @@ class AnthropicBackend(Backend):
         import anthropic
         self.client = anthropic.Anthropic(max_retries=cfg.get("max_retries", 5), timeout=cfg.get("timeout", 300))
 
-    def call(self, system, parts, role):
+    def request_kwargs(self, system, parts):
+        """The exact arguments sent to messages.create."""
         content = [
             {"type": "text", "text": p} if isinstance(p, str)
             else {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png_base64(p)}}
@@ -80,7 +81,10 @@ class AnthropicBackend(Backend):
             kwargs["thinking"] = {"type": self.cfg["thinking"]}  # "adaptive" or "between_tools" (no thinking)
         if self.cfg.get("effort"):
             kwargs["output_config"] = {"effort": self.cfg["effort"]}
-        r = self.client.messages.create(**kwargs)
+        return kwargs
+
+    def call(self, system, parts, role):
+        r = self.client.messages.create(**self.request_kwargs(system, parts))
         text = "".join(b.text for b in r.content if b.type == "text")
         return Response(text, r.stop_reason, r.usage.input_tokens, r.usage.output_tokens, r.to_dict())
 

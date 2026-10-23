@@ -1,7 +1,9 @@
 """Run the second-look experiment: pass 1, helper, then pass 2 for every condition.
 
-Usage: python -m src.run --config configs/mock_val.yaml
+Usage: python -m src.run --config configs/mock_val.yaml [--until-done]
 Reruns are free: every response is cached on disk, so an interrupted run resumes where it stopped.
+--until-done keeps rerunning (waiting longer each time) until no request is left failing on a
+network or server error, which is how a run survives lost wifi or a sleeping laptop.
 """
 import argparse
 import json
@@ -25,6 +27,15 @@ CONDITIONS = ["alone"] + PASS2_CONDITIONS  # alone = the pass-1 report, no revis
 
 class BudgetExceeded(RuntimeError):
     pass
+
+
+def is_retryable(e):
+    """Network problems, timeouts, rate limits and server errors are worth retrying later; request errors are not."""
+    status = getattr(e, "status_code", None)
+    if status is not None:
+        return status in (408, 409, 429) or status >= 500
+    name = type(e).__name__
+    return isinstance(e, (ConnectionError, TimeoutError)) or "Connection" in name or "Timeout" in name
 
 
 class RateLimiter:
@@ -91,15 +102,18 @@ class Caller:
             if not cached:
                 self.new_cost += cost
             self.log.append(entry | {"cached": cached, "cost_usd": round(cost, 6)})
+            n_new = sum(not e["cached"] for e in self.log)
+            if not cached and n_new % 25 == 0:
+                print(f"  [{time.strftime('%H:%M:%S')}] {n_new} new requests, ${self.new_cost:.2f} so far", flush=True)
         return rec
 
     def ask(self, role, condition, image_id, system, parts, parse):
         """Request and validate. On invalid output, retry once with a 'return only valid JSON' nudge.
 
-        Returns (parsed or None, info). Refusals and API errors are not retried here
-        (the SDK already retries rate limits and server errors).
+        Returns (parsed or None, info). Refusals and API errors are not retried here: the SDK already
+        retries briefly, failed requests are not cached, and --until-done reruns them later.
         """
-        info = {"attempts": 0, "parse_errors": [], "refusal": False, "error": None}
+        info = {"attempts": 0, "parse_errors": [], "refusal": False, "error": None, "retryable": False}
         for attempt in range(2):
             p = parts if attempt == 0 else parts[:-1] + [parts[-1] + prompts.RETRY_NUDGE]
             info["attempts"] += 1
@@ -109,6 +123,7 @@ class Caller:
                 raise
             except Exception as e:
                 info["error"] = f"{type(e).__name__}: {e}"
+                info["retryable"] = is_retryable(e)
                 return None, info
             if rec["stop_reason"] == "refusal":
                 info["refusal"] = True
@@ -181,16 +196,20 @@ def run(cfg):
         r["pass2"][cond] = {"report": revised, **info}
 
     t0 = time.time()
+    stopped_by_budget = False
     try:
         with ThreadPoolExecutor(cfg["concurrency"]) as pool:
             list(pool.map(pass1, ids))
             ok = [i for i in ids if results[i]["pass1"]["report"]]
+            print(f"  pass 1 done: {len(ok)}/{len(ids)} images ok", flush=True)
             if "helper_boxes" in conditions:
                 list(pool.map(helper, ok))
+                print("  helper done", flush=True)
             for i in ok:
                 make_box_sets(i)
             list(pool.map(pass2, [(i, c) for i in ok for c in conditions if c in PASS2_CONDITIONS]))
     except BudgetExceeded as e:
+        stopped_by_budget = True
         print(f"STOPPED: budget cap reached ({e}). Cached responses are kept; raise max_usd and rerun to resume.")
     finally:
         with open(out_dir / "predictions.jsonl", "w") as f:
@@ -199,10 +218,30 @@ def run(cfg):
         with open(out_dir / "calls.jsonl", "w") as f:
             for entry in caller.log:
                 f.write(json.dumps(entry) + "\n")
-        summary = summarize(cfg, ids, results, caller, time.time() - t0)
+        summary = summarize(cfg, ids, results, caller, time.time() - t0) | {"stopped_by_budget": stopped_by_budget}
         json.dump(summary, open(out_dir / "summary.json", "w"), indent=2)
         print_summary(summary)
-    return results
+    return results, summary
+
+
+def run_until_done(cfg, wait=60, max_wait=900):
+    """Rerun until no request is left failing on a retryable error. Each pass reuses the cache."""
+    while True:
+        results, summary = run(cfg)
+        rel = summary["reliability"]
+        if summary["stopped_by_budget"]:
+            return results, summary
+        if rel["fatal_errors"]:
+            print(f"STOPPED: {rel['fatal_errors']} requests failed with non-retryable errors, e.g. "
+                  f"{rel['api_errors_sample'][:2]}. Fix the cause and rerun.")
+            return results, summary
+        if not rel["retryable_errors"]:
+            print("DONE: every request has a response.")
+            return results, summary
+        print(f"[{time.strftime('%H:%M:%S')}] {rel['retryable_errors']} requests failed on network/server errors; "
+              f"retrying in {wait}s", flush=True)
+        time.sleep(wait)
+        wait = min(wait * 2, max_wait)
 
 
 def summarize(cfg, ids, results, caller, seconds):
@@ -235,6 +274,8 @@ def summarize(cfg, ids, results, caller, seconds):
         "reliability": {
             "reader": rates([t for role, _, t in tasks if role == "reader"]),
             "helper": rates([t for role, _, t in tasks if role == "helper"]),
+            "retryable_errors": sum(t["error"] is not None and t["retryable"] for _, _, t in tasks),
+            "fatal_errors": sum(t["error"] is not None and not t["retryable"] for _, _, t in tasks),
             "parse_errors_sample": [e for _, _, t in tasks for e in t["parse_errors"]][:10],
             "api_errors_sample": [t["error"] for _, _, t in tasks if t["error"]][:5],
         },
@@ -272,6 +313,8 @@ def load_config(path):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--until-done", action="store_true", help="rerun until no request fails on network/server errors")
     args = ap.parse_args()
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-    run(load_config(args.config))
+    cfg = load_config(args.config)
+    run_until_done(cfg) if args.until_done else run(cfg)
