@@ -41,7 +41,12 @@ def test_box_quality():
         {"box": (0.6, 0.6, 0.9, 0.9), "source": "pad"},  # outside
     ]}}
     q = score.box_quality(r, "oracle_boxes", {"Edema": mask}, missed=["Edema", "Lung Lesion"])
-    assert q == {"hits": 1, "boxes": 3, "real_hits": 1, "real_boxes": 1, "covered": 1, "misses": 1}
+    assert q == {"hits": 1, "boxes": 3, "real_hits": 1, "real_boxes": 1, "covered": 1, "covered_strict": 1,
+                 "misses": 1}
+    # Only the 4%-inside box: covered by any overlap, but not strictly.
+    r["boxes"]["oracle_boxes"] = r["boxes"]["oracle_boxes"][1:]
+    q = score.box_quality(r, "oracle_boxes", {"Edema": mask}, missed=["Edema"])
+    assert q["covered"] == 1 and q["covered_strict"] == 0
 
 
 def test_bootstrap_identical_conditions_have_zero_net_change():

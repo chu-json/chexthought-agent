@@ -81,7 +81,7 @@ def box_quality(r, cond, masks, missed):
     union = None
     for m in masks.values():
         union = m if union is None else union | m
-    out = {"hits": 0, "boxes": 0, "real_hits": 0, "real_boxes": 0, "covered": 0, "misses": 0}
+    out = {"hits": 0, "boxes": 0, "real_hits": 0, "real_boxes": 0, "covered": 0, "covered_strict": 0, "misses": 0}
     for b in r["boxes"][cond]:
         hit = union is not None and bx.fraction_inside(b["box"], union) >= HIT_FRACTION
         out["hits"] += hit
@@ -93,6 +93,8 @@ def box_quality(r, cond, masks, missed):
         if f in masks:  # skip misses whose mask is empty
             out["misses"] += 1
             out["covered"] += any(bx.overlaps(b["box"], masks[f]) for b in r["boxes"][cond])
+            out["covered_strict"] += any(bx.fraction_inside(b["box"], masks[f]) >= HIT_FRACTION
+                                         for b in r["boxes"][cond])
     return out
 
 
@@ -109,7 +111,9 @@ def statistics(y, preds, probs, boxq, conds):
             q = boxq[c]
             out[(c, "hit_rate")] = q["hits"].sum() / max(q["boxes"].sum(), 1)
             out[(c, "real_hit_rate")] = q["real_hits"].sum() / q["real_boxes"].sum() if q["real_boxes"].sum() else np.nan
-            out[(c, "miss_coverage")] = q["covered"].sum() / q["misses"].sum() if q["misses"].sum() else np.nan
+            for k in ("covered", "covered_strict"):
+                name = k.replace("covered", "miss_coverage")
+                out[(c, name)] = q[k].sum() / q["misses"].sum() if q["misses"].sum() else np.nan
     return out
 
 
@@ -204,14 +208,19 @@ def write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_fin
     if boxq:
         lines += ["## Box quality", "",
                   f"Hit rate: share of boxes with at least {HIT_FRACTION:.0%} of their area inside any ground-truth mask. "
-                  "Miss coverage: share of the reader's pass-1 misses where a box overlaps that finding's mask.", "",
-                  "| Condition | Hit rate | Hit rate, non-padding boxes (n) | Miss coverage | Pass-1 misses |",
-                  "|---|---|---|---|---|"]
+                  "Miss coverage: share of the reader's pass-1 misses where a box overlaps that finding's mask "
+                  f"(any overlap); strict: a box has at least {HIT_FRACTION:.0%} of its area inside that finding's mask.",
+                  "",
+                  "| Condition | Hit rate | Hit rate, non-padding boxes (n) | Miss coverage | Miss coverage, strict "
+                  "| Pass-1 misses |",
+                  "|---|---|---|---|---|---|"]
         for c in boxq:
             q = boxq[c]
             lines.append(f"| {LABEL[c]} | {fmt_ci(point[(c, 'hit_rate')], ci[(c, 'hit_rate')])} | "
                          f"{fmt_ci(point[(c, 'real_hit_rate')], ci[(c, 'real_hit_rate')])} ({int(q['real_boxes'].sum())}) | "
-                         f"{fmt_ci(point[(c, 'miss_coverage')], ci[(c, 'miss_coverage')])} | {int(q['misses'].sum())} |")
+                         f"{fmt_ci(point[(c, 'miss_coverage')], ci[(c, 'miss_coverage')])} | "
+                         f"{fmt_ci(point[(c, 'miss_coverage_strict')], ci[(c, 'miss_coverage_strict')])} | "
+                         f"{int(q['misses'].sum())} |")
         lines.append("")
 
     lines += ["## Per-finding metrics", ""]

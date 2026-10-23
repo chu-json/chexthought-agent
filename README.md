@@ -90,11 +90,12 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
 - **Scoring** is complete-case: an image is scored only if every condition produced a valid report, so all
   conditions are compared on the same images. CIs come from a paired bootstrap over images (1000 resamples, seed 0).
 - **Box-quality caveat:** many masks are large (Lung Opacity, Edema, Enlarged Cardiomediastinum), so random boxes
-  often "hit" (≥20% of the box inside any mask) and "cover" misses (any overlap). Compare C–F against C, not against 0.
+  often "hit" (≥20% of the box inside any mask) and "cover" misses (any overlap). Miss coverage is therefore also
+  reported strictly (≥20% of a box inside *that* finding's mask). Compare C–F against C, not against 0.
 
 ## Ideas for later
 
-- Stricter miss coverage (e.g. ≥20% of the box inside *that* finding's mask, or box-mask IoU).
+- Box-mask IoU as a further box-quality measure.
 - Prompt caching for the shared image prefix, and the Batch API (50% cheaper) for large runs.
 - Structured outputs (JSON schema) instead of prompt-only JSON, once other backends are in play.
 - Reader/helper pairs across models (Qwen3-VL, MedGemma via vLLM; GPT via `openai`).

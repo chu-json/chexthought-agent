@@ -273,5 +273,5 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     args = ap.parse_args()
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     run(load_config(args.config))
