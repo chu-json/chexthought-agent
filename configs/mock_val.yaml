@@ -29,7 +29,7 @@ helper:
 
 concurrency: 4
 requests_per_minute: 6000
-max_usd: 1                      # stop the run once new spend reaches this
+max_usd: 1                      # stop once this run's total spend (all passes and restarts) reaches this
 prices_per_mtok:                # USD per million tokens, for cost logging and the max_usd cap
   claude-sonnet-5-5: {input: 2.0, output: 10.0}
   mock: {input: 0.0, output: 0.0}

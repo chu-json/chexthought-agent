@@ -105,3 +105,35 @@ def test_is_retryable():
     assert run.is_retryable(Status(429)) and run.is_retryable(Status(529)) and run.is_retryable(Status(500))
     assert not run.is_retryable(Status(400)) and not run.is_retryable(Status(401))
     assert not run.is_retryable(KeyError("bug"))
+
+
+@pytest.mark.skipif(not DATA.exists(), reason="dataset not available")
+def test_each_call_record_has_request_thinking_and_parsed_output(tmp_path):
+    cfg = mock_config(tmp_path)
+    results, _ = run.run(cfg)
+    calls = [json.loads(line) for line in open(tmp_path / "run" / "calls.jsonl")]
+    oracle = [c for c in calls if c["condition"] == "oracle_boxes" and c["stop_reason"] != "refusal"]
+    rec = json.load(open(oracle[0]["record"]))
+    images = [p for p in rec["request"]["content"] if p["type"] == "image"]
+    assert [p["variant"] for p in images] == ["clean", "boxed"]
+    assert all(p["image_id"] == rec["image_id"] for p in images)
+    assert len(images[1]["drawn_boxes"]) == bx.N_BOXES
+    assert rec["request"]["system"] and "A colleague flagged" in rec["request"]["content"][-1]["text"]
+    assert rec["thinking"] == ["mock thinking summary"] and rec["raw"]
+    assert "parsed" in rec and "parse_error" in rec
+    if rec["parsed"] is not None:
+        assert rec["parsed"] == results[rec["image_id"]]["pass2"]["oracle_boxes"]["report"]
+    for c in calls:  # every call has its record on disk, with the parse outcome
+        r = json.load(open(c["record"]))
+        assert "request" in r and "parsed" in r
+
+
+@pytest.mark.skipif(not DATA.exists(), reason="dataset not available")
+def test_budget_cap_holds_across_passes(tmp_path):
+    cfg = mock_config(tmp_path)
+    cfg["prices_per_mtok"] = {"mock": {"input": 1e5, "output": 1e5}}  # every call costs > max_usd
+    _, s1 = run.run(cfg)
+    assert s1["stopped_by_budget"] and 0 < s1["requests_new"] <= cfg["concurrency"]
+    _, s2 = run.run(cfg)  # a restart must not reset the spend
+    assert s2["stopped_by_budget"] and s2["requests_new"] == 0
+    assert s2["cost_usd_run_total"] == s1["cost_usd_run_total"]

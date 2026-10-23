@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 from . import boxes as bx
 from . import data, prompts
-from .backends import make_backend, request_hash
+from .backends import image_digest, make_backend, request_hash
 
 BOX_CONDITIONS = ["random_boxes", "checklist_boxes", "helper_boxes", "oracle_boxes"]
 PASS2_CONDITIONS = ["look_again"] + BOX_CONDITIONS
@@ -54,8 +54,31 @@ class RateLimiter:
         time.sleep(start - now)
 
 
+def write_json(path, obj):
+    """Write atomically, so a killed process never leaves a half-written file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    json.dump(obj, open(tmp, "w"))
+    tmp.rename(path)
+
+
+def describe_request(system, parts, image_meta):
+    """What was sent, as JSON: text verbatim; each image by id, variant (clean/boxed), drawn boxes and pixel hash."""
+    meta = iter(image_meta)
+    content = [
+        {"type": "text", "text": p} if isinstance(p, str)
+        else {"type": "image", **next(meta), "size": list(p.size), "mode": p.mode, "pixel_sha256": image_digest(p)}
+        for p in parts
+    ]
+    return {"system": system, "content": content}
+
+
 class Caller:
-    """Model calls for one run, with an on-disk cache, rate limit, budget cap and token/cost log."""
+    """Model calls for one run, with an on-disk cache, rate limit, budget cap and token/cost log.
+
+    Each request is one JSON file in the cache holding the request (prompt text, image ids), the full raw
+    response (including thinking blocks), the extracted thinking text and the parsed output.
+    """
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -65,12 +88,16 @@ class Caller:
         self.lock = threading.Lock()
         self.log = []  # one entry per request, cached or not
         self.new_cost = 0.0  # USD for uncached requests in this invocation
+        # Total new spend for this run across passes and restarts; max_usd applies to this.
+        self.ledger_path = Path(cfg["output_dir"]) / "spend.json"
+        self.ledger = json.load(open(self.ledger_path)) if self.ledger_path.exists() else {"usd": 0.0, "requests": 0}
 
     def cost(self, rec):
         price = self.cfg["prices_per_mtok"][rec["settings"]["model"]]
         return (rec["input_tokens"] * price["input"] + rec["output_tokens"] * price["output"]) / 1e6
 
-    def request(self, role, condition, image_id, system, parts):
+    def request(self, role, condition, image_id, system, parts, image_meta):
+        """Returns (record, path). Cached records missing a request description get one added."""
         backend = self.backends[role]
         settings = backend.settings()
         key = request_hash(system, parts, settings)
@@ -78,61 +105,72 @@ class Caller:
         cached = path.exists()
         if cached:
             rec = json.load(open(path))
+            if "request" not in rec:
+                rec["request"] = describe_request(system, parts, image_meta)
+                write_json(path, rec)
         else:
             with self.lock:
-                if self.new_cost >= self.cfg["max_usd"]:
-                    raise BudgetExceeded(f"spent ${self.new_cost:.2f}, max_usd is {self.cfg['max_usd']}")
+                if self.ledger["usd"] >= self.cfg["max_usd"]:
+                    raise BudgetExceeded(f"run has spent ${self.ledger['usd']:.2f}, max_usd is {self.cfg['max_usd']}")
             self.limiter.wait()
             t0 = time.time()
             r = backend.call(system, parts, role)
             rec = {
                 "role": role, "condition": condition, "image_id": image_id, "prompt_hash": key,
-                "settings": settings, "text": r.text, "stop_reason": r.stop_reason,
+                "settings": settings, "request": describe_request(system, parts, image_meta),
+                "text": r.text, "thinking": r.thinking, "stop_reason": r.stop_reason,
                 "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
                 "seconds": round(time.time() - t0, 2), "time": time.strftime("%Y-%m-%dT%H:%M:%S"), "raw": r.raw,
             }
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            json.dump(rec, open(tmp, "w"))
-            tmp.rename(path)
+            write_json(path, rec)
         cost = self.cost(rec)
         entry = {k: rec[k] for k in ("role", "condition", "image_id", "prompt_hash", "settings", "stop_reason",
                                      "input_tokens", "output_tokens")}
         with self.lock:
             if not cached:
                 self.new_cost += cost
-            self.log.append(entry | {"cached": cached, "cost_usd": round(cost, 6)})
+                self.ledger = {"usd": self.ledger["usd"] + cost, "requests": self.ledger["requests"] + 1}
+                write_json(self.ledger_path, self.ledger)
+            self.log.append(entry | {"cached": cached, "cost_usd": round(cost, 6), "record": str(path)})
             n_new = sum(not e["cached"] for e in self.log)
             if not cached and n_new % 25 == 0:
-                print(f"  [{time.strftime('%H:%M:%S')}] {n_new} new requests, ${self.new_cost:.2f} so far", flush=True)
-        return rec
+                print(f"  [{time.strftime('%H:%M:%S')}] {n_new} new requests this pass, run total "
+                      f"${self.ledger['usd']:.2f}", flush=True)
+        return rec, path
 
-    def ask(self, role, condition, image_id, system, parts, parse):
+    def ask(self, role, condition, image_id, system, parts, parse, image_meta):
         """Request and validate. On invalid output, retry once with a 'return only valid JSON' nudge.
 
-        Returns (parsed or None, info). Refusals and API errors are not retried here: the SDK already
-        retries briefly, failed requests are not cached, and --until-done reruns them later.
+        The parsed output (or parse error) is saved into each request's record. Returns (parsed or None,
+        info). Refusals and API errors are not retried here: the SDK already retries briefly, failed
+        requests are not cached, and --until-done reruns them later.
         """
         info = {"attempts": 0, "parse_errors": [], "refusal": False, "error": None, "retryable": False}
         for attempt in range(2):
             p = parts if attempt == 0 else parts[:-1] + [parts[-1] + prompts.RETRY_NUDGE]
             info["attempts"] += 1
             try:
-                rec = self.request(role, condition, image_id, system, p)
+                rec, path = self.request(role, condition, image_id, system, p, image_meta)
             except BudgetExceeded:
                 raise
             except Exception as e:
                 info["error"] = f"{type(e).__name__}: {e}"
                 info["retryable"] = is_retryable(e)
                 return None, info
+            parsed, error = None, None
             if rec["stop_reason"] == "refusal":
                 info["refusal"] = True
-                return None, info
-            try:
-                return parse(rec["text"]), info
-            except prompts.ParseError as e:
-                note = " (stopped at max_tokens)" if rec["stop_reason"] in ("max_tokens", "length") else ""
-                info["parse_errors"].append(str(e) + note)
+            else:
+                try:
+                    parsed = parse(rec["text"])
+                except prompts.ParseError as e:
+                    note = " (stopped at max_tokens)" if rec["stop_reason"] in ("max_tokens", "length") else ""
+                    error = str(e) + note
+                    info["parse_errors"].append(error)
+            if "parsed" not in rec or rec.get("parse_error") != error:
+                write_json(path, rec | {"parsed": parsed, "parse_error": error})
+            if parsed is not None or info["refusal"]:
+                return parsed, info
         return None, info
 
 
@@ -156,16 +194,19 @@ def run(cfg):
     caller = Caller(cfg)
     results = {i: {"image_id": i, "split": split, "labels": labels[i], "boxes": {}, "pass2": {}} for i in ids}
 
+    def clean(i):
+        return {"image_id": i, "variant": "clean"}
+
     def pass1(i):
         report, info = caller.ask("reader", "pass1", i, prompts.READER_SYSTEM, [images[i], prompts.pass1_text()],
-                                  prompts.parse_reader)
+                                  prompts.parse_reader, [clean(i)])
         results[i]["pass1"] = {"report": report, **info}
 
     def helper(i):
         im = images[i]
         text = prompts.helper_text(results[i]["pass1"]["report"], fmt, im.width, im.height)
         out, info = caller.ask("helper", "helper", i, prompts.HELPER_SYSTEM, [im, text],
-                               lambda t: prompts.parse_helper(t, fmt, im.width, im.height))
+                               lambda t: prompts.parse_helper(t, fmt, im.width, im.height), [clean(i)])
         results[i]["helper"] = {"boxes": out, "n_real": len(out or []), **info}
 
     def make_box_sets(i):
@@ -189,10 +230,13 @@ def run(cfg):
         report = r["pass1"]["report"]
         if cond == "look_again":
             parts = [images[i], prompts.pass2_text(report, with_boxes=False)]
+            meta = [clean(i)]
         else:
             boxed = bx.draw_boxes(images[i], [b["box"] for b in r["boxes"][cond]])
             parts = [images[i], boxed, prompts.pass2_text(report, with_boxes=True)]
-        revised, info = caller.ask("reader", cond, i, prompts.READER_SYSTEM, parts, prompts.parse_reader)
+            # Box sources (e.g. "oracle:Edema") are logged for analysis; only the numbered outlines are drawn.
+            meta = [clean(i), {"image_id": i, "variant": "boxed", "drawn_boxes": r["boxes"][cond]}]
+        revised, info = caller.ask("reader", cond, i, prompts.READER_SYSTEM, parts, prompts.parse_reader, meta)
         r["pass2"][cond] = {"report": revised, **info}
 
     t0 = time.time()
@@ -268,7 +312,7 @@ def summarize(cfg, ids, results, caller, seconds):
 
     log = caller.log
     return {
-        "name": cfg["name"], "split": cfg["split"], "n_images": len(ids),
+        "name": cfg["name"], "split": cfg["split"], "n_images": len(ids), "max_usd": cfg["max_usd"],
         "reader": caller.backends["reader"].settings(), "helper": caller.backends["helper"].settings(),
         "helper_box_format": cfg["helper"].get("box_format", "norm"),
         "reliability": {
@@ -288,6 +332,7 @@ def summarize(cfg, ids, results, caller, seconds):
         },
         "cost_usd_all_requests": round(sum(e["cost_usd"] for e in log), 4),
         "cost_usd_new_this_run": round(caller.new_cost, 4),
+        "cost_usd_run_total": round(caller.ledger["usd"], 4),  # all new spend for this run, every pass
         "seconds": round(seconds, 1),
     }
 
@@ -299,7 +344,8 @@ def print_summary(s):
         print(f"  {role}: {s['reliability'][role]}")
     print(f"  helper real boxes: {s['helper_real_boxes']}")
     print(f"  tokens: {s['tokens']}")
-    print(f"  cost: ${s['cost_usd_all_requests']} for all requests, ${s['cost_usd_new_this_run']} new this run")
+    print(f"  cost: ${s['cost_usd_new_this_run']} new this pass; run total ${s['cost_usd_run_total']} "
+          f"(cap ${s['max_usd']})")
 
 
 def load_config(path):

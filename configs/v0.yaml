@@ -16,6 +16,7 @@ reader:
   model: claude-sonnet-5-5
   max_tokens: 16000             # room for thinking plus the report
   thinking: adaptive            # adaptive | between_tools (between_tools = no extended thinking)
+  thinking_display: summarized  # return a readable summary of the thinking (Claude never returns it in full)
   effort: medium                # low | medium | high | xhigh | max
   temperature: null             # Claude models reject sampling parameters; null = API default
 
@@ -24,13 +25,14 @@ helper:
   model: claude-sonnet-5-5
   max_tokens: 16000             # room for thinking plus the report
   thinking: adaptive
+  thinking_display: summarized
   effort: medium
   temperature: null
   box_format: pixel             # coordinates the helper is asked for; converted in boxes.to_norm
 
 concurrency: 4
 requests_per_minute: 40
-max_usd: 25                     # stop the run once new spend reaches this
+max_usd: 25                     # stop once this run's total spend (all passes and restarts) reaches this
 prices_per_mtok:                # USD per million tokens, for cost logging and the max_usd cap
   claude-sonnet-5-5: {input: 2.0, output: 10.0}
   mock: {input: 0.0, output: 0.0}

@@ -7,7 +7,7 @@ import hashlib
 import io
 import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import boxes as bx
 from .data import FINDINGS
@@ -18,8 +18,9 @@ class Response:
     text: str
     stop_reason: str  # "refusal" marks a refusal on every backend
     input_tokens: int
-    output_tokens: int
-    raw: dict
+    output_tokens: int  # includes thinking tokens, which are billed in full even when only summarized
+    raw: dict  # the full response as returned by the API
+    thinking: list = field(default_factory=list)  # readable thinking text, one entry per thinking block
 
 
 def image_digest(im):
@@ -49,7 +50,7 @@ class Backend:
 
     def settings(self):
         """Sampling and thinking settings, logged with every call and part of the cache key."""
-        keys = ("backend", "model", "max_tokens", "temperature", "thinking", "effort")
+        keys = ("backend", "model", "max_tokens", "temperature", "thinking", "thinking_display", "effort")
         return {k: self.cfg.get(k) for k in keys}
 
     def call(self, system, parts, role):
@@ -57,12 +58,18 @@ class Backend:
 
 
 class AnthropicBackend(Backend):
-    """Claude Messages API. temperature must be null: current Claude models reject sampling parameters."""
+    """Claude Messages API. temperature must be null: current Claude models reject sampling parameters.
+
+    Claude never returns its full chain of thought. thinking_display "summarized" returns a readable summary
+    in each thinking block; the default ("omitted") returns thinking blocks with empty text.
+    """
 
     def __init__(self, cfg):
         super().__init__(cfg)
         if cfg.get("temperature") is not None:
             raise ValueError("Claude models reject temperature; set it to null (API default)")
+        if cfg.get("thinking_display") and cfg.get("thinking") != "adaptive":
+            raise ValueError("thinking_display only works with thinking: adaptive")
         import anthropic
         self.client = anthropic.Anthropic(max_retries=cfg.get("max_retries", 5), timeout=cfg.get("timeout", 300))
 
@@ -79,6 +86,8 @@ class AnthropicBackend(Backend):
         }
         if self.cfg.get("thinking"):
             kwargs["thinking"] = {"type": self.cfg["thinking"]}  # "adaptive" or "between_tools" (no thinking)
+            if self.cfg.get("thinking_display"):
+                kwargs["thinking"]["display"] = self.cfg["thinking_display"]
         if self.cfg.get("effort"):
             kwargs["output_config"] = {"effort": self.cfg["effort"]}
         return kwargs
@@ -86,7 +95,9 @@ class AnthropicBackend(Backend):
     def call(self, system, parts, role):
         r = self.client.messages.create(**self.request_kwargs(system, parts))
         text = "".join(b.text for b in r.content if b.type == "text")
-        return Response(text, r.stop_reason, r.usage.input_tokens, r.usage.output_tokens, r.to_dict())
+        thinking = [b.thinking if b.type == "thinking" else "[redacted]"
+                    for b in r.content if b.type in ("thinking", "redacted_thinking")]
+        return Response(text, r.stop_reason, r.usage.input_tokens, r.usage.output_tokens, r.to_dict(), thinking)
 
 
 def openai_messages(system, parts):
@@ -156,7 +167,7 @@ class MockBackend(Backend):
         else:
             text, stop = self._reader(rng, prompt), "end_turn"
         in_tokens = (len(system) + len(prompt)) // 4 + 1100 * len(images)
-        return Response(text, stop, in_tokens, len(text) // 4, {"mock": True})
+        return Response(text, stop, in_tokens, len(text) // 4, {"mock": True}, ["mock thinking summary"])
 
     def _reader(self, rng, prompt):
         earlier = None

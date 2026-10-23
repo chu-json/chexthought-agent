@@ -57,11 +57,21 @@ echo 'ANTHROPIC_API_KEY=...' > .env           # gitignored
 .venv/bin/python -m src.run   --config configs/v0.yaml           # 100 test images, Claude
 ```
 
-Each run writes `predictions.jsonl` (everything per image), `calls.jsonl` (every request with tokens, cost and
-settings) and `summary.json` to its `output_dir`; `src.score` adds `results.md` and `predictions.csv`.
-Every response is cached under `outputs/cache/`, keyed by (model, role, condition, image, prompt hash), where the
-prompt hash covers the prompt text, image pixels and model settings. Reruns are free and interrupted runs resume.
-A run stops once new spend reaches `max_usd`.
+Each run writes `predictions.jsonl` (everything per image), `calls.jsonl` (every request with tokens, cost,
+settings and the path to its record), `summary.json` and `spend.json` to its `output_dir`; `src.score` adds
+`results.md` and `predictions.csv`.
+
+Every request is one JSON record under `outputs/cache/<model>/<role>/<condition>/<image>__<prompt hash>.json`,
+keyed by (model, role, condition, image, prompt hash), where the hash covers prompt text, image pixels and settings.
+Reruns are free and interrupted runs resume. Each record holds:
+- `request`: the system prompt and every content part as sent. Text is stored verbatim. Images are stored as
+  image id, variant (`clean` or `boxed`), the drawn boxes with their sources (e.g. `oracle:Edema`; only the numbered
+  outlines are drawn), size and pixel hash.
+- `raw`: the full API response (every content block, including thinking blocks, plus usage with `thinking_tokens`).
+- `thinking`: the readable thinking text; `text`: the answer; `parsed` / `parse_error`: the validated output.
+- `settings`, tokens, timing and stop reason.
+
+`max_usd` caps the run's total spend across all passes and restarts (tracked in `spend.json`).
 
 **Long runs (overnight, flaky wifi):**
 
@@ -87,8 +97,11 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
   sometimes returns broken JSON or a refusal on purpose).
 - **Temperature can't be fixed on Claude:** current Claude models reject `temperature`/`top_p`/`top_k`, so the
   config sets `temperature: null` (API default) and logs it. Thinking (`adaptive` or `between_tools` = none) and
-  `effort` are fixed in the config and logged with every call. v0 uses adaptive thinking at `medium` effort:
-  at `low`, the model skipped thinking on all 35 dry-run calls.
+  `effort` are fixed in the config and logged with every call.
+- **Thinking traces are summaries:** Claude never returns its full chain of thought. With
+  `thinking_display: summarized` each thinking block holds a readable summary (thinking tokens are billed in full).
+  On this task Sonnet 5.5 chose not to think at `low`, `medium` or `high` effort (0 thinking tokens over 39 val
+  calls); at `xhigh` it always thinks (200–350 thinking tokens per pass-1 call).
 - **Helper coordinates:** Claude is asked for pixel coordinates on the image it sees (its native format), and
   `boxes.to_norm` converts them to normalized [0,1] (x1, y1, x2, y2). All other box math is normalized.
   Formats `norm`, `norm1000` (Qwen3-VL) and `yxyx1000` (Gemma/MedGemma) are also supported and tested.
