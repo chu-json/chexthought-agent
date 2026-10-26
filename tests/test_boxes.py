@@ -130,3 +130,12 @@ def test_oracle_boxes_overlap_their_masks_on_real_data():
         for b in bx.oracle_boxes(gt, list(gt), set(), random.Random(0), SIZES):
             if b["source"].startswith("oracle:"):
                 assert bx.overlaps(b["box"], decoded[b["source"].split(":", 1)[1]])
+
+
+def test_unpadded_boxes_keep_only_real_ones():
+    real = [{"box": (0.1, 0.1, 0.3, 0.3)}, {"box": (0.5, 0.5, 0.7, 0.7)}]
+    for n in range(3):
+        s = bx.helper_boxes(real[:n], random.Random(0), SIZES, pad=False)
+        assert len(s) == n and all(b["source"] == "helper" for b in s)
+    gt = {"A": (0.1, 0.1, 0.3, 0.3)}
+    assert [b["source"] for b in bx.oracle_boxes(gt, ["A"], set(), random.Random(0), SIZES, pad=False)] == ["oracle:A"]

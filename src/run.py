@@ -21,7 +21,8 @@ from . import data, prompts
 from .backends import image_digest, make_backend, request_hash
 
 BOX_CONDITIONS = ["random_boxes", "checklist_boxes", "helper_boxes", "oracle_boxes"]
-PASS2_CONDITIONS = ["look_again"] + BOX_CONDITIONS
+# look_again: pass 2 without boxes, revising the earlier report; repeat: a second blind read (fresh mode).
+PASS2_CONDITIONS = ["look_again", "repeat"] + BOX_CONDITIONS
 CONDITIONS = ["alone"] + PASS2_CONDITIONS  # alone = the pass-1 report, no revision
 
 
@@ -191,6 +192,9 @@ def run(cfg):
     sizes = [(b[2] - b[0], b[3] - b[1]) for by_finding in gt.values() for b in by_finding.values()]
     images = {i: data.load_image(root, split, i, cfg["image_long_edge"]) for i in ids}
     fmt = cfg["helper"].get("box_format", "norm")
+    # v0: flagged wording, padded boxes, reader revises its report. v1: neutral wording, real boxes only,
+    # and in "fresh" mode the reader reads again without seeing its earlier report.
+    style, mode, pad = cfg.get("prompts", "v0"), cfg.get("pass2_mode", "revise"), cfg.get("pad_boxes", True)
     caller = Caller(cfg)
     results = {i: {"image_id": i, "split": split, "labels": labels[i], "boxes": {}, "pass2": {}} for i in ids}
 
@@ -204,9 +208,10 @@ def run(cfg):
 
     def helper(i):
         im = images[i]
-        text = prompts.helper_text(results[i]["pass1"]["report"], fmt, im.width, im.height)
-        out, info = caller.ask("helper", "helper", i, prompts.HELPER_SYSTEM, [im, text],
-                               lambda t: prompts.parse_helper(t, fmt, im.width, im.height), [clean(i)])
+        text = prompts.helper_text(results[i]["pass1"]["report"], fmt, im.width, im.height, style)
+        parse = prompts.parse_helper if style == "v0" else prompts.parse_helper_boxes
+        out, info = caller.ask("helper", "helper", i, prompts.helper_system(style), [im, text],
+                               lambda t: parse(t, fmt, im.width, im.height), [clean(i)])
         results[i]["helper"] = {"boxes": out, "n_real": len(out or []), **info}
 
     def make_box_sets(i):
@@ -216,24 +221,27 @@ def run(cfg):
         makers = {
             "random_boxes": lambda rng: bx.random_boxes(rng, sizes),
             "checklist_boxes": lambda rng: bx.checklist_boxes(rng),
-            "helper_boxes": lambda rng: bx.helper_boxes(r.get("helper", {}).get("boxes"), rng, sizes),
-            "oracle_boxes": lambda rng: bx.oracle_boxes(gt.get(i, {}), present, missed, rng, sizes),
+            "helper_boxes": lambda rng: bx.helper_boxes(r.get("helper", {}).get("boxes"), rng, sizes, pad),
+            "oracle_boxes": lambda rng: bx.oracle_boxes(gt.get(i, {}), present, missed, rng, sizes, pad),
         }
         for c in BOX_CONDITIONS:
-            if c in conditions:
-                r["boxes"][c] = makers[c](bx.rng_for(seed, i, c))
-                assert len(r["boxes"][c]) == bx.N_BOXES
+            if c not in conditions:
+                continue
+            if c == "helper_boxes" and not pad and r.get("helper", {}).get("boxes") is None:
+                continue  # the helper call failed: no helper read for this image (dropped when scoring)
+            r["boxes"][c] = makers[c](bx.rng_for(seed, i, c))
+            assert len(r["boxes"][c]) == bx.N_BOXES if pad else len(r["boxes"][c]) <= bx.N_BOXES
 
     def pass2(job):
         i, cond = job
         r = results[i]
-        report = r["pass1"]["report"]
-        if cond == "look_again":
-            parts = [images[i], prompts.pass2_text(report, with_boxes=False)]
+        report = r["pass1"]["report"] if mode == "revise" else None
+        if not r["boxes"].get(cond):  # look_again, repeat, or a v1 helper that marked no regions
+            parts = [images[i], prompts.pass2_text(report, False, style)]
             meta = [clean(i)]
         else:
             boxed = bx.draw_boxes(images[i], [b["box"] for b in r["boxes"][cond]])
-            parts = [images[i], boxed, prompts.pass2_text(report, with_boxes=True)]
+            parts = [images[i], boxed, prompts.pass2_text(report, True, style)]
             # Box sources (e.g. "oracle:Edema") are logged for analysis; only the numbered outlines are drawn.
             meta = [clean(i), {"image_id": i, "variant": "boxed", "drawn_boxes": r["boxes"][cond]}]
         revised, info = caller.ask("reader", cond, i, prompts.READER_SYSTEM, parts, prompts.parse_reader, meta)
@@ -251,7 +259,8 @@ def run(cfg):
                 print("  helper done", flush=True)
             for i in ok:
                 make_box_sets(i)
-            list(pool.map(pass2, [(i, c) for i in ok for c in conditions if c in PASS2_CONDITIONS]))
+            list(pool.map(pass2, [(i, c) for i in ok for c in conditions
+                                  if c in PASS2_CONDITIONS and (c not in BOX_CONDITIONS or c in results[i]["boxes"])]))
     except BudgetExceeded as e:
         stopped_by_budget = True
         print(f"STOPPED: budget cap reached ({e}). Cached responses are kept; raise max_usd and rerun to resume.")
@@ -315,6 +324,8 @@ def summarize(cfg, ids, results, caller, seconds):
         "name": cfg["name"], "split": cfg["split"], "n_images": len(ids), "max_usd": cfg["max_usd"],
         "reader": caller.backends["reader"].settings(), "helper": caller.backends["helper"].settings(),
         "helper_box_format": cfg["helper"].get("box_format", "norm"),
+        "prompts": cfg.get("prompts", "v0"), "pass2_mode": cfg.get("pass2_mode", "revise"),
+        "pad_boxes": cfg.get("pad_boxes", True),
         "reliability": {
             "reader": rates([t for role, _, t in tasks if role == "reader"]),
             "helper": rates([t for role, _, t in tasks if role == "helper"]),
@@ -353,6 +364,15 @@ def load_config(path):
     unknown = set(cfg["conditions"]) - set(CONDITIONS)
     if unknown:
         raise ValueError(f"unknown conditions {unknown}")
+    style, mode = cfg.get("prompts", "v0"), cfg.get("pass2_mode", "revise")
+    if style not in ("v0", "v1") or mode not in ("revise", "fresh"):
+        raise ValueError("prompts must be v0 or v1; pass2_mode must be revise or fresh")
+    if style == "v0" and mode == "fresh":
+        raise ValueError("v0 prompts always revise the earlier report")
+    if mode == "fresh" and "look_again" in cfg["conditions"]:
+        raise ValueError("look_again revises the earlier report; in fresh mode use repeat")
+    if mode == "revise" and "repeat" in cfg["conditions"]:
+        raise ValueError("repeat is a fresh second read; use pass2_mode: fresh")
     return cfg
 
 

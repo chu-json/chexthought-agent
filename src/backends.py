@@ -163,7 +163,7 @@ class MockBackend(Backend):
         elif rng.random() < self.invalid_rate:
             text, stop = "Here is my report: {not valid json", "end_turn"
         elif role == "helper":
-            text, stop = self._helper(rng, *images[0].size), "end_turn"
+            text, stop = self._helper(rng, *images[0].size, labeled='"suspected_finding"' in prompt), "end_turn"
         else:
             text, stop = self._reader(rng, prompt), "end_turn"
         in_tokens = (len(system) + len(prompt)) // 4 + 1100 * len(images)
@@ -185,15 +185,16 @@ class MockBackend(Backend):
             findings[f] = {"present": present, "probability": prob, "location": "mock" if present == "yes" else ""}
         return json.dumps({"findings": findings, "reasoning": "mock"})
 
-    def _helper(self, rng, width, height):
+    def _helper(self, rng, width, height, labeled):
+        """v0 helper output has a label and reason per box; v1 is regions only."""
         fmt = self.cfg.get("box_format", "norm")
         out = []
         for _ in range(rng.randint(0, bx.N_BOXES)):
             w, h = rng.uniform(0.1, 0.4), rng.uniform(0.1, 0.4)
             x1, y1 = rng.uniform(0, 1 - w), rng.uniform(0, 1 - h)
-            native = bx.from_norm((x1, y1, x1 + w, y1 + h), fmt, width, height)
-            out.append({"box": [round(v, 3) for v in native], "suspected_finding": rng.choice(FINDINGS + ["other"]),
-                        "reason": "mock"})
+            box = [round(v, 3) for v in bx.from_norm((x1, y1, x1 + w, y1 + h), fmt, width, height)]
+            out.append({"box": box, "suspected_finding": rng.choice(FINDINGS + ["other"]), "reason": "mock"}
+                       if labeled else box)
         return json.dumps({"boxes": out})
 
 

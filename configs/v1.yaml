@@ -1,0 +1,46 @@
+# v1: does a helper's "likely missed" regions help a reader that first read blind?
+# Neutral prompts, xhigh thinking (the only effort level where Sonnet 5.5 thinks on this task).
+name: v1
+data_root: ~/data/chexlocalize
+split: val                      # val keeps test untouched; see docs/v1_spec.md
+n_images: 100
+sample_seed: 0
+min_positives_per_finding: 10   # stratification: take up to this many positives per finding first
+exclude_ids: []
+image_long_edge: 1024           # images sent to APIs are resized so the long edge is this many px
+box_seed: 0
+conditions: [alone, repeat, helper_boxes]   # add oracle_boxes for a ceiling (about +$2)
+prompts: v1                     # neutral wording; the helper returns regions only
+pass2_mode: fresh               # pass 2 is a new read: the reader does not see its earlier report
+pad_boxes: false                # show only the helper's real boxes (0-3), no random padding
+
+reader:
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000             # room for thinking plus the report
+  thinking: adaptive            # adaptive | between_tools (between_tools = no extended thinking)
+  thinking_display: summarized  # return a readable summary of the thinking (Claude never returns it in full)
+  effort: xhigh                 # low | medium | high | xhigh | max
+  temperature: null             # Claude models reject sampling parameters; null = API default
+
+helper:
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000
+  thinking: adaptive
+  thinking_display: summarized
+  effort: xhigh
+  temperature: null
+  box_format: pixel             # coordinates the helper is asked for; converted in boxes.to_norm
+
+concurrency: 4
+requests_per_minute: 40
+max_usd: 15                     # stop once this run's total spend (all passes and restarts) reaches this
+prices_per_mtok:                # USD per million tokens, for cost logging and the max_usd cap
+  claude-sonnet-5-5: {input: 2.0, output: 10.0}
+  claude-opus-5-5: {input: 4.0, output: 20.0}
+  mock: {input: 0.0, output: 0.0}
+
+cache_dir: outputs/cache
+output_dir: outputs/v1
+bootstrap: {n: 1000, seed: 0}

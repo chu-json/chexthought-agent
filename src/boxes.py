@@ -103,7 +103,7 @@ def overlaps(box, mask):
     return bool(mask[y1:y2, x1:x2].any())
 
 
-# --- Box sets for the pass-2 conditions. Each returns exactly N_BOXES dicts {"box", "source"}. ---
+# --- Box sets for the pass-2 conditions: lists of {"box", "source"}, exactly N_BOXES when padded. ---
 
 def rng_for(seed, image_id, condition):
     """Deterministic RNG per (seed, image, condition); str seeds are hashed stably by `random`."""
@@ -117,10 +117,13 @@ def random_box(rng, sizes):
     return (x1, y1, x1 + w, y1 + h)
 
 
-def pad_and_shuffle(real, rng, sizes):
-    """Pad to N_BOXES with random boxes, then shuffle so the numbering doesn't reveal which are real."""
+def pad_and_shuffle(real, rng, sizes, pad=True):
+    """Pad to N_BOXES with random boxes (if pad), then shuffle so the numbering doesn't reveal which are real.
+
+    Without padding (v1) only the real boxes are shown; shuffling still keeps their order from carrying a ranking.
+    """
     out = [dict(b) for b in real[:N_BOXES]]
-    while len(out) < N_BOXES:
+    while pad and len(out) < N_BOXES:
         out.append({"box": random_box(rng, sizes), "source": "pad"})
     rng.shuffle(out)
     return out
@@ -134,12 +137,12 @@ def checklist_boxes(rng):
     return [{"box": CHECKLIST[k], "source": f"checklist:{k}"} for k in rng.sample(sorted(CHECKLIST), N_BOXES)]
 
 
-def helper_boxes(helper_out, rng, sizes):
+def helper_boxes(helper_out, rng, sizes, pad=True):
     real = [{"box": b["box"], "source": "helper"} for b in helper_out or []]
-    return pad_and_shuffle(real, rng, sizes)
+    return pad_and_shuffle(real, rng, sizes, pad)
 
 
-def oracle_boxes(gt_for_image, present, missed, rng, sizes):
+def oracle_boxes(gt_for_image, present, missed, rng, sizes, pad=True):
     """Boxes around ground-truth masks of present findings.
 
     Findings the reader missed in pass 1 come first, ties broken at random; a box that nearly
@@ -153,7 +156,7 @@ def oracle_boxes(gt_for_image, present, missed, rng, sizes):
         box = tuple(gt_for_image[f])
         if all(iou(box, c["box"]) <= 0.5 for c in chosen):
             chosen.append({"box": box, "source": f"oracle:{f}"})
-    return pad_and_shuffle(chosen, rng, sizes)
+    return pad_and_shuffle(chosen, rng, sizes, pad)
 
 
 def draw_boxes(image, boxes):

@@ -16,10 +16,11 @@ from . import data
 from .run import BOX_CONDITIONS, CONDITIONS, load_config
 
 LABEL = {
-    "alone": "A. alone", "look_again": "B. look_again", "random_boxes": "C. random_boxes",
+    "alone": "A. alone", "look_again": "B. look_again", "repeat": "B. repeat", "random_boxes": "C. random_boxes",
     "checklist_boxes": "D. checklist_boxes", "helper_boxes": "E. helper_boxes", "oracle_boxes": "F. oracle_boxes",
 }
 METRICS = ["sensitivity", "specificity", "f1", "auroc"]
+REFS = ("alone", "look_again", "repeat")  # conditions that answer changes are counted against
 HIT_FRACTION = 0.2  # a box "hits" if at least 20% of its area is inside a ground-truth mask
 
 
@@ -104,9 +105,13 @@ def statistics(y, preds, probs, boxq, conds):
     for c in conds:
         for k, v in macro(finding_metrics(y, preds[c], probs[c])).items():
             out[(c, k)] = v
-            if "alone" in conds and c != "alone":
-                out[(c, f"d_{k}_vs_alone")] = v - out[("alone", k)]
-        for ref in ("alone", "look_again"):
+    for c in conds:  # paired metric changes from each reference condition
+        for ref in REFS:
+            if ref in conds and c != ref and c != "alone":
+                for k in METRICS:
+                    out[(c, f"d_{k}_vs_{ref}")] = out[(c, k)] - out[(ref, k)]
+    for c in conds:
+        for ref in REFS:
             if ref in conds and c != ref:
                 out[(c, f"net_vs_{ref}")] = changes(y, preds[ref], preds[c])["net"]
         if c in boxq:
@@ -163,7 +168,7 @@ def score(cfg):
     ci = bootstrap(y, preds, probs, boxq, conds, boot["n"], boot["seed"])
     per_finding = {c: finding_metrics(y, preds[c], probs[c]) for c in conds}
     change_tables = {ref: {c: changes(y, preds[ref], preds[c]) for c in conds if c != ref}
-                     for ref in ("alone", "look_again") if ref in conds}
+                     for ref in REFS if ref in conds}
 
     summary = json.load(open(out_dir / "summary.json"))
     md = write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_finding, change_tables, boxq, boot)
@@ -186,6 +191,9 @@ def write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_fin
         f"failed are dropped from every condition, to keep comparisons paired).",
         f"Reader: {rd['model']} (thinking {rd['thinking']}, effort {rd['effort']}, temperature: API default). "
         f"Helper: {hp['model']} (thinking {hp['thinking']}, effort {hp['effort']}).",
+        f"Prompts: {summary.get('prompts', 'v0')}; pass 2: {summary.get('pass2_mode', 'revise')} "
+        f"({'reader sees its earlier report' if summary.get('pass2_mode', 'revise') == 'revise' else 'fresh read without its earlier report'}); "
+        f"boxes {'padded to 3 with random boxes' if summary.get('pad_boxes', True) else 'not padded (real boxes only)'}.",
         f"95% CIs: paired bootstrap over images, {boot['n']} resamples, seed {boot['seed']}.", "",
         "## Macro-averaged metrics (10 findings)", "",
         "| Condition | Sensitivity | Specificity | F1 | AUROC |", "|---|---|---|---|---|",
@@ -193,22 +201,24 @@ def write_markdown(cfg, summary, results, complete, y, conds, point, ci, per_fin
     for c in conds:
         lines.append(f"| {LABEL[c]} | " + " | ".join(fmt_ci(point[(c, k)], ci[(c, k)]) for k in METRICS) + " |")
 
-    if "alone" in conds:
-        lines += ["", "**Change from A (paired 95% CI)**", "", "| Condition | Sensitivity | Specificity | F1 | AUROC |",
-                  "|---|---|---|---|---|"]
-        for c in conds:
-            if c != "alone":
-                lines.append(f"| {LABEL[c]} | " + " | ".join(
-                    fmt_ci(point[(c, f'd_{k}_vs_alone')], ci[(c, f'd_{k}_vs_alone')]) for k in METRICS) + " |")
+    for ref in REFS:
+        rows = [c for c in conds if (c, f"d_auroc_vs_{ref}") in point]
+        if not rows:
+            continue
+        lines += ["", f"**Change from {LABEL[ref].split('.')[0]} ({LABEL[ref]}), paired 95% CI**", "",
+                  "| Condition | Sensitivity | Specificity | F1 | AUROC |", "|---|---|---|---|---|"]
+        for c in rows:
+            lines.append(f"| {LABEL[c]} | " + " | ".join(
+                fmt_ci(point[(c, f'd_{k}_vs_{ref}')], ci[(c, f'd_{k}_vs_{ref}')]) for k in METRICS) + " |")
 
-    lines += ["", "## Answer changes vs A (alone) and vs B (look_again)", "",
+    lines += ["", "## Answer changes vs A and vs B", "",
               "Counted over images x findings. fixed = FN→TP, added = TN→FP (new false alarm), "
               "net = fixed − added; lost = TP→FN, cleared = FP→TN.", ""]
     for ref, table in change_tables.items():
         lines += [f"**vs {LABEL[ref]}**", "", "| Condition | fixed | added | net [95% CI] | lost | cleared |",
                   "|---|---|---|---|---|---|"]
         for c, ch in table.items():
-            if ref == "look_again" and c == "alone":
+            if ref != "alone" and c == "alone":
                 continue
             net_ci = ci[(c, f"net_vs_{ref}")]
             lines.append(f"| {LABEL[c]} | {ch['fixed']} | {ch['added']} | {ch['net']} [{net_ci[0]:.0f}, {net_ci[1]:.0f}]"

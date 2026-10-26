@@ -33,7 +33,7 @@ def test_mock_pipeline_end_to_end(tmp_path):
             continue
         assert set(r["boxes"]) == set(run.BOX_CONDITIONS)
         assert all(len(b) == bx.N_BOXES for b in r["boxes"].values())
-        assert set(r["pass2"]) == set(run.PASS2_CONDITIONS)
+        assert set(r["pass2"]) == set(cfg["conditions"]) - {"alone"}
         if r["helper"]["boxes"] is not None:
             n_real = sum(b["source"] == "helper" for b in r["boxes"]["helper_boxes"])
             assert n_real == r["helper"]["n_real"]
@@ -137,3 +137,60 @@ def test_budget_cap_holds_across_passes(tmp_path):
     _, s2 = run.run(cfg)  # a restart must not reset the spend
     assert s2["stopped_by_budget"] and s2["requests_new"] == 0
     assert s2["cost_usd_run_total"] == s1["cost_usd_run_total"]
+
+
+def v1_config(tmp_path):
+    cfg = mock_config(tmp_path, "v1")
+    cfg |= {"prompts": "v1", "pass2_mode": "fresh", "pad_boxes": False, "n_images": 6,
+            "conditions": ["alone", "repeat", "helper_boxes", "oracle_boxes"]}
+    return cfg
+
+
+@pytest.mark.skipif(not DATA.exists(), reason="dataset not available")
+def test_v1_fresh_pipeline(tmp_path):
+    cfg = v1_config(tmp_path)
+    results, _ = run.run(cfg)
+    calls = [json.loads(line) for line in open(tmp_path / "v1" / "calls.jsonl")]
+    first = {}  # (image, condition) -> first request record
+    for c in calls:
+        first.setdefault((c["image_id"], c["condition"]), json.load(open(c["record"])))
+    for i, r in results.items():
+        if r["pass1"]["report"] is None:
+            continue
+        # A repeat read is exactly the pass-1 request, sampled again.
+        assert first[(i, "repeat")]["prompt_hash"] == first[(i, "pass1")]["prompt_hash"]
+        # The helper's regions only, unpadded; the reader never sees its earlier report.
+        n_real = r["helper"]["n_real"]
+        assert len(r["boxes"]["helper_boxes"]) == n_real
+        assert all(b["source"] == "helper" for b in r["boxes"]["helper_boxes"])
+        rec = first[(i, "helper_boxes")]
+        images = [p for p in rec["request"]["content"] if p["type"] == "image"]
+        assert len(images) == (2 if n_real else 1)
+        text = rec["request"]["content"][-1]["text"]
+        assert "earlier report" not in text and "suspected" not in text
+    score.score(cfg)
+
+
+@pytest.mark.skipif(not DATA.exists(), reason="dataset not available")
+def test_v1_failed_helper_drops_the_image(tmp_path, monkeypatch):
+    from src.backends import MockBackend, Response
+    real_call = MockBackend.call
+
+    def refuse_helper(self, system, parts, role):
+        if role == "helper":
+            return Response("", "refusal", 10, 0, {})
+        return real_call(self, system, parts, role)
+
+    monkeypatch.setattr(MockBackend, "call", refuse_helper)
+    results, _ = run.run(v1_config(tmp_path))
+    assert all("helper_boxes" not in r["pass2"] and "helper_boxes" not in r["boxes"] for r in results.values())
+
+
+def test_config_rejects_incompatible_modes(tmp_path):
+    import yaml
+    base = yaml.safe_load(open("configs/v1.yaml"))
+    for change in [{"conditions": ["alone", "look_again"]}, {"prompts": "v0"}, {"pass2_mode": "revise"}]:
+        path = tmp_path / "c.yaml"
+        yaml.safe_dump(base | change, open(path, "w"))
+        with pytest.raises(ValueError):
+            run.load_config(path)

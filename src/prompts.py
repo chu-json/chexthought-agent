@@ -34,6 +34,15 @@ PASS2_TEXT_NO_BOXES = (
     "Your earlier report:\n{report}\n\n" + REVISE + " " + RETURN_FULL
 )
 
+# v1 pass-2 wording: describes the inputs and asks for the report, without saying the regions were flagged,
+# that anything was missed, or that the report should change. In "fresh" mode the reader doesn't see its
+# earlier report; with no boxes that request is identical to pass 1 (a repeat read).
+V1_BOXES_FRESH = "The first image is a chest X-ray. The second image is the same X-ray with numbered boxes drawn on it by another model."
+V1_BOXES_REVISE = ("The first image is the chest X-ray you read. The second image is the same X-ray with numbered boxes "
+                   "drawn on it by another model.")
+V1_NO_BOXES_REVISE = "This is the chest X-ray you read."
+V1_FINAL = "Give your final report in the same JSON format."
+
 RETRY_NUDGE = "\n\nReturn only valid JSON in exactly the format specified, with no other text."
 
 HELPER_SYSTEM = (
@@ -50,6 +59,19 @@ Propose up to 3 boxes around regions where the colleague most likely missed some
 
 Respond with only a JSON object, no other text, in exactly this format:
 {{"boxes": [{{"box": {placeholder}, "suspected_finding": "<one of: {findings}, or other>", "reason": "<short reason>"}}]}}"""
+
+# v1 helper: returns regions only, no finding labels or reasons, so nothing but locations can reach the reader.
+HELPER_SYSTEM_V1 = "You are an expert radiologist reviewing chest X-ray reads."
+
+HELPER_TEXT_V1 = """Another reader looked at this frontal chest X-ray and wrote this report:
+{report}
+
+Mark up to 3 regions of the image where this report most likely missed a finding that is visible on the image. Mark fewer regions, or none, if you think nothing was missed. Give only the regions, with no labels or explanations.
+
+{coords}
+
+Respond with only a JSON object, no other text, in exactly this format:
+{{"boxes": [{placeholder}, ...]}}"""
 
 COORDS = {
     "pixel": ("Give each box in pixel coordinates of this image, which is {width} pixels wide and {height} pixels "
@@ -71,14 +93,25 @@ def pass1_text():
     return PASS1_TEXT
 
 
-def pass2_text(report, with_boxes):
-    template = PASS2_TEXT_BOXES if with_boxes else PASS2_TEXT_NO_BOXES
-    return template.format(report=report_json(report))
+def pass2_text(report, with_boxes, style="v0"):
+    """Pass-2 prompt. report=None (v1 only) is a fresh read: the reader doesn't see its earlier report."""
+    if style == "v0":
+        template = PASS2_TEXT_BOXES if with_boxes else PASS2_TEXT_NO_BOXES
+        return template.format(report=report_json(report))
+    if report is None:
+        return V1_BOXES_FRESH + "\n\n" + PASS1_TEXT if with_boxes else PASS1_TEXT
+    intro = V1_BOXES_REVISE if with_boxes else V1_NO_BOXES_REVISE
+    return f"{intro}\n\nYour earlier report:\n{report_json(report)}\n\n{V1_FINAL}"
 
 
-def helper_text(report, fmt, width, height):
+def helper_system(style="v0"):
+    return HELPER_SYSTEM if style == "v0" else HELPER_SYSTEM_V1
+
+
+def helper_text(report, fmt, width, height, style="v0"):
     coords, placeholder = COORDS[fmt]
-    return HELPER_TEXT.format(
+    template = HELPER_TEXT if style == "v0" else HELPER_TEXT_V1
+    return template.format(
         report=report_json(report), coords=coords.format(width=width, height=height),
         placeholder=placeholder, findings=FINDING_LIST,
     )
@@ -141,14 +174,28 @@ def parse_helper(text, fmt, width, height):
         if not isinstance(b, dict):
             raise ParseError("each box entry must be an object")
         box = b.get("box")
-        if not (isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box)):
-            raise ParseError("'box' must be a list of 4 numbers")
         if b.get("suspected_finding") not in FINDINGS + ["other"]:
             raise ParseError(f"bad suspected_finding {b.get('suspected_finding')!r}")
         if not isinstance(b.get("reason"), str):
             raise ParseError("'reason' must be a string")
-        norm = bx.to_norm(box, fmt, width, height)
-        if bx.area(norm) == 0:
-            raise ParseError(f"box {box} has no area inside the image")
-        out.append({"box": norm, "raw_box": box, "suspected_finding": b["suspected_finding"], "reason": b["reason"]})
+        out.append({"box": _to_norm_box(box, fmt, width, height), "raw_box": box,
+                    "suspected_finding": b["suspected_finding"], "reason": b["reason"]})
     return out
+
+
+def parse_helper_boxes(text, fmt, width, height):
+    """Validate v1 helper output: {"boxes": [[x1, y1, x2, y2], ...]}, regions only. Returns [{"box", "raw_box"}]."""
+    obj = extract_json(text)
+    raw = obj.get("boxes") if isinstance(obj, dict) else None
+    if not isinstance(raw, list) or len(raw) > bx.N_BOXES:
+        raise ParseError(f"'boxes' must be a list of at most {bx.N_BOXES}")
+    return [{"box": _to_norm_box(box, fmt, width, height), "raw_box": box} for box in raw]
+
+
+def _to_norm_box(box, fmt, width, height):
+    if not (isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box)):
+        raise ParseError("'box' must be a list of 4 numbers")
+    norm = bx.to_norm(box, fmt, width, height)
+    if bx.area(norm) == 0:
+        raise ParseError(f"box {box} has no area inside the image")
+    return norm

@@ -25,6 +25,10 @@ Rules that keep results meaningful:
 - Pass-2 wording is identical for C–F; B uses the same prompt without the box sentences ([src/prompts.py](src/prompts.py)).
 - The helper's `suspected_finding` and `reason` are logged only; the reader never sees them.
 
+**v1 (next):** neutral wording, a blind read (A), a repeat blind read (B), and a fresh read with only the
+helper's regions drawn (E); xhigh thinking. Full spec: [docs/v1_spec.md](docs/v1_spec.md). Set by
+`prompts: v1`, `pass2_mode: fresh` and `pad_boxes: false` in [configs/v1.yaml](configs/v1.yaml).
+
 ## Data
 
 CheXlocalize (unofficial Kaggle re-upload), unzipped **outside the repo** to `~/data/chexlocalize/`.
