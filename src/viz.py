@@ -29,7 +29,9 @@ def box_note(k, b, r):
     note = f"{k}: {b['source']} {[round(v, 3) for v in b['box']]}"
     if b["source"] == "helper":
         match = next(h for h in r["helper"]["boxes"] if list(h["box"]) == list(b["box"]))
-        note += f"  raw={match['raw_box']}  suspected={match['suspected_finding']}"
+        note += f"  raw={match['raw_box']}"
+        if "suspected_finding" in match:  # v0 helpers also name a finding; v1 helpers give regions only
+            note += f"  suspected={match['suspected_finding']}"
     return note
 
 

@@ -96,6 +96,7 @@ def test_v1_fresh_read():
 def test_v1_helper_returns_regions_only():
     text = prompts.helper_text(report(), "pixel", 1024, 840, "v1").replace(json.dumps(report()), "")
     assert "suspected_finding" not in text and "reason" not in text
+    assert prompts.FINDING_LIST in text  # the helper looks only for misses among the 10 scored findings
     out = prompts.parse_helper_boxes('{"boxes": [[102.4, 168, 614.4, 756]]}', "pixel", 1024, 840)
     assert out == [{"box": pytest.approx((0.1, 0.2, 0.6, 0.9)), "raw_box": [102.4, 168, 614.4, 756]}]
     assert prompts.parse_helper_boxes('{"boxes": []}', "pixel", 1024, 840) == []

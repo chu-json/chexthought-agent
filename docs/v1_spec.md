@@ -78,7 +78,9 @@ Helper (one image: clean):
 Another reader looked at this frontal chest X-ray and wrote this report:
 <A's report as JSON>
 
-Mark up to 3 regions of the image where this report most likely missed a finding that is visible on the image.
+Mark up to 3 regions of the image where this report most likely missed one of these findings: Atelectasis,
+Cardiomegaly, Consolidation, Edema, Enlarged Cardiomediastinum, Lung Lesion, Lung Opacity, Pleural Effusion,
+Pneumothorax, Support Devices. A missed finding is one that is visible on the image but marked "no" in the report.
 Mark fewer regions, or none, if you think nothing was missed. Give only the regions, with no labels or explanations.
 
 Give each box in pixel coordinates of this image, which is <W> pixels wide and <H> pixels tall, with (0, 0) at
@@ -87,6 +89,10 @@ the top-left corner.
 Respond with only a JSON object, no other text, in exactly this format:
 {"boxes": [[x1, y1, x2, y2], ...]}
 ```
+
+Changed after the 5-image check: the helper was first told to mark "a finding that is visible on the image", and
+its thinking went to findings outside the 10 (fractures, subcutaneous emphysema, tube position), with boxes on
+the shoulders. It now names the 10 scored findings. This is the helper's instruction only; the reader never sees it.
 
 Invalid JSON is retried once with: `Return only valid JSON in exactly the format specified, with no other text.`
 A test checks that the reader prompts contain none of: colleague, flag, second look, missed, revise, abnormal, review.

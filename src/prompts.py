@@ -66,7 +66,7 @@ HELPER_SYSTEM_V1 = "You are an expert radiologist reviewing chest X-ray reads."
 HELPER_TEXT_V1 = """Another reader looked at this frontal chest X-ray and wrote this report:
 {report}
 
-Mark up to 3 regions of the image where this report most likely missed a finding that is visible on the image. Mark fewer regions, or none, if you think nothing was missed. Give only the regions, with no labels or explanations.
+Mark up to 3 regions of the image where this report most likely missed one of these findings: {findings}. A missed finding is one that is visible on the image but marked "no" in the report. Mark fewer regions, or none, if you think nothing was missed. Give only the regions, with no labels or explanations.
 
 {coords}
 
