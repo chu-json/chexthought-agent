@@ -25,9 +25,11 @@ Rules that keep results meaningful:
 - Pass-2 wording is identical for C–F; B uses the same prompt without the box sentences ([src/prompts.py](src/prompts.py)).
 - The helper's `suspected_finding` and `reason` are logged only; the reader never sees them.
 
-**v1 (next):** neutral wording, a blind read (A), a repeat blind read (B), and a fresh read with only the
+**v1:** neutral wording, a blind read (A), a repeat blind read (B), and a fresh read with only the
 helper's regions drawn (E); xhigh thinking. Full spec: [docs/v1_spec.md](docs/v1_spec.md). Set by
 `prompts: v1`, `pass2_mode: fresh` and `pad_boxes: false` in [configs/v1.yaml](configs/v1.yaml).
+Result on 100 val images: E lowered specificity by 0.154 [0.116, 0.193] vs B with no gain in sensitivity, because
+the helper boxed 60 of the 62 images where A had missed nothing and the reader treated boxes as findings.
 
 ## Data
 
@@ -126,6 +128,12 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
   reported strictly (≥20% of a box inside *that* finding's mask). Compare C–F against C, not against 0.
 
 ## Ideas for later
+
+From v1 (`outputs/v1/results.md`):
+- A helper that abstains more: the v1 helper marked regions on 98 of 100 images. Options are asking for a
+  confidence per region and drawing only confident ones, or allowing at most one region.
+- Tell the reader how often the helper's regions turn out to contain a finding, so it can weigh them.
+- Check why E dropped diffuse findings (Enlarged Cardiomediastinum 10, Edema 5 true calls lost) in the stored thinking.
 
 From v0 (`outputs/v0/results.md`):
 - A helper that flags likely *over-calls* (the reader had 180 false positives vs 40 misses on 100 images).
