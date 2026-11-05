@@ -81,16 +81,17 @@ class Caller:
     response (including thinking blocks), the extracted thinking text and the parsed output.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, roles=("reader", "helper")):
         self.cfg = cfg
-        self.backends = {role: make_backend(cfg[role]) for role in ("reader", "helper")}
+        self.backends = {role: make_backend(cfg[role]) for role in roles}
         self.cache_dir = Path(cfg["cache_dir"])
         self.limiter = RateLimiter(cfg["requests_per_minute"])
         self.lock = threading.Lock()
         self.log = []  # one entry per request, cached or not
         self.new_cost = 0.0  # USD for uncached requests in this invocation
         # Total new spend for this run across passes and restarts; max_usd applies to this.
-        self.ledger_path = Path(cfg["output_dir"]) / "spend.json"
+        # spend_file lets several configs (e.g. a dry run and the full run) share one cap.
+        self.ledger_path = Path(cfg.get("spend_file") or Path(cfg["output_dir"]) / "spend.json")
         self.ledger = json.load(open(self.ledger_path)) if self.ledger_path.exists() else {"usd": 0.0, "requests": 0}
 
     def cost(self, rec):

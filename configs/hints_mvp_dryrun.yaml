@@ -1,0 +1,44 @@
+# hints_mvp dry run: 5 of the sampled images, every condition, Claude. Shares the cache and spend cap with
+# configs/hints_mvp.yaml, so the full run reuses these 30 responses.
+name: hints_mvp_dryrun
+csv: ~/Downloads/chexthoughtdataset.csv
+image_root: ~/data/chexpert_plus        # CheXpert Plus PNGs at <image_root>/train/patientX/studyN/viewK_frontal.png
+seed: 0                                 # candidate order, trace choice, other/random trails, spot check
+n_images: 100
+n_normal: 50                            # the first 50 normal images; images with a finding fill the rest
+label_batch: 100                        # reports labeled per batch, in candidate order, until both groups can fill
+max_labeled: 1500                       # stop labeling after this many reports even if n_normal isn't reached
+image_long_edge: 1024                   # images are resized so the long edge is this many px
+conditions: [no_hint, no_hint_rerun, own_trail, other_trail, random_trail, leak_check]
+
+labeler:
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000
+  thinking: adaptive
+  thinking_display: summarized
+  effort: medium
+  temperature: null             # Claude models reject sampling parameters; null = API default
+
+reader:
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000
+  thinking: adaptive
+  thinking_display: summarized
+  effort: medium
+  temperature: null
+
+concurrency: 8
+requests_per_minute: 100
+max_usd: 15                             # one cap for labels and every reader call, across configs and restarts
+spend_file: outputs/hints_mvp/spend.json
+prices_per_mtok:
+  claude-sonnet-5-5: {input: 2.0, output: 10.0}
+  mock: {input: 0.0, output: 0.0}
+
+cache_dir: outputs/cache
+output_dir: outputs/hints_mvp/dryrun
+sample_file: outputs/hints_mvp/sample.json
+limit: 5                                # a fixed random 5 of the 100 sampled images
+bootstrap: {n: 1000, seed: 0}

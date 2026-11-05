@@ -127,6 +127,49 @@ Layout: `configs/` (one YAML per run), `src/` (`data`, `boxes`, `prompts`, `back
   often "hit" (≥20% of the box inside any mask) and "cover" misses (any overlap). Miss coverage is therefore also
   reported strictly (≥20% of a box inside *that* finding's mask). Compare C–F against C, not against 0.
 
+## hints_mvp: a radiologist's click trail as a hint
+
+A separate experiment in [src/hints_mvp/](src/hints_mvp/). Does giving the reader the radiologist's click trail
+for an image (CheXthought `spatial_annotations`, normalized x, y in click order) help it find more of the image's
+findings, and does that depend on the trail coming from this image? One read per condition, no revision:
+`no_hint`, `no_hint_rerun` (an identical second request: the noise floor), `own_trail`, `other_trail` (another
+sampled image's trail), `random_trail` (as many uniform random points) and `leak_check` (own trail, no image).
+The trail goes in as text, with the same sentence for every trail condition ([src/hints_mvp/prompts.py](src/hints_mvp/prompts.py)).
+
+- **Data:** the CheXthought CSV (`~/Downloads/chexthoughtdataset.csv`, Redivis `aimi.CheXthought`) and the sampled
+  CheXpert Plus PNGs, downloaded one by one from Redivis `aimi.chexpert_plus:5yyj:v1_0.png_train:s6cj` to
+  `~/data/chexpert_plus/train/...` (`fetch_images.py`; needs `REDIVIS_API_TOKEN` in `.env`).
+- **Sample:** frontal images in a fixed random order (seed 0), one per patient, one trace each; traces with ≥80% of
+  their x and y values within 0.001 of a 0.01 grid are skipped as snapped (11% of frontal traces). Reports are labeled
+  in that order until there are 50 normal images (all 13 findings absent; about 5% of reports), then the first 50
+  images with a finding are taken. 1,100 reports were labeled.
+- **Labels:** each report is labeled by `claude-sonnet-5-5` as present / uncertain / absent for 13 CheXpert findings;
+  No Finding follows CheXpert's rule. `outputs/hints_mvp/spot_check.md` has 20 for checking by hand.
+- **Scoring:** the 13 findings, pooled over images x findings, against the report labels, with uncertain counted as
+  positive and, separately, left out. Changes vs `no_hint` (fixed, broken, new false findings, cleared, recovery and
+  break rates) and sensitivity, specificity and F1, with paired bootstrap CIs. `leak_check` also gets Youden's J
+  within findings, so knowing which findings are common earns nothing.
+
+```bash
+.venv/bin/python -m src.hints_mvp.sample --config configs/hints_mvp.yaml        # labels and sample (cached)
+.venv/bin/python -m src.hints_mvp.fetch_images --config configs/hints_mvp.yaml --table "aimi.chexpert_plus:5yyj:v1_0.png_train:s6cj"
+.venv/bin/python -m src.hints_mvp.run   --config configs/hints_mvp.yaml --show-prompts   # prompt_examples.md, free
+.venv/bin/python -m src.hints_mvp.run   --config configs/hints_mvp.yaml --until-done
+.venv/bin/python -m src.hints_mvp.score --config configs/hints_mvp.yaml        # sonnet_results.md
+```
+
+`configs/hints_mvp_mock.yaml` runs the same pipeline for free. MedGemma (`google/medgemma-1.5-4b-it`) runs through
+the `transformers` backend on a CUDA GPU (bf16, sampling at Gemma 3's recommended settings, so the rerun is a real
+rerun) with `configs/hints_mvp_medgemma.yaml`; setup on a GPU machine is in
+[docs/hints_mvp_medgemma_handoff.md](docs/hints_mvp_medgemma_handoff.md). One cap (`max_usd`, via `spend_file`)
+covers labels and every Claude call.
+
+**Result with Sonnet 5.5** (`outputs/hints_mvp/sonnet_results.md`, $11.45 in total): no trail raised sensitivity
+(own_trail −0.012 [−0.058, +0.026]), and own, other and random trails gave the same results. Any trail cut false
+findings on the 50 normal images from 88 to 67–68 (specificity +0.020 to +0.027), whatever its source, so that comes
+from adding the trail text, not from where the radiologist looked. Without the image, the coordinates carry a little
+information (within-finding J +0.047 [+0.013, +0.093], mostly Lung Opacity and Pleural Effusion).
+
 ## Ideas for later
 
 From v1 (`outputs/v1/results.md`):

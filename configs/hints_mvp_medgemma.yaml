@@ -1,0 +1,46 @@
+# hints_mvp with MedGemma as the reader, on a local CUDA GPU (written for an RTX 3090, 24 GB; the model needs ~9 GB).
+# Same sample, prompts, conditions and scoring as configs/hints_mvp.yaml. Needs outputs/hints_mvp/sample.json
+# and the 100 images at image_root. Local and free, so nothing is spent.
+name: hints_mvp_medgemma
+csv: ~/Downloads/chexthoughtdataset.csv   # only used to build the sample, which is copied over
+image_root: ~/data/chexpert_plus
+seed: 0
+n_images: 100
+n_normal: 50
+label_batch: 100
+max_labeled: 1500
+image_long_edge: 1024
+conditions: [no_hint, no_hint_rerun, own_trail, other_trail, random_trail, leak_check]
+
+labeler:                        # the report labels already exist in sample.json; not used by the run
+  backend: anthropic
+  model: claude-sonnet-5-5
+  max_tokens: 16000
+  thinking: adaptive
+  thinking_display: summarized
+  effort: medium
+  temperature: null
+
+reader:
+  backend: transformers
+  model: google/medgemma-1.5-4b-it
+  dtype: bfloat16
+  device: cuda
+  max_tokens: 2000              # max new tokens; a full report is about 700
+  do_sample: true               # each request is an independent sample, so no_hint_rerun is a real rerun
+  temperature: 1.0              # Gemma 3's recommended sampling settings (Claude also runs at its default, 1.0)
+  top_p: 0.95
+  top_k: 64
+
+concurrency: 1                  # one generate at a time on the GPU
+requests_per_minute: 100000
+max_usd: 15
+spend_file: outputs/hints_mvp/medgemma/spend.json
+prices_per_mtok:
+  google/medgemma-1.5-4b-it: {input: 0.0, output: 0.0}
+
+cache_dir: outputs/cache
+output_dir: outputs/hints_mvp/medgemma
+sample_file: outputs/hints_mvp/sample.json
+results_file: medgemma_results.md
+bootstrap: {n: 1000, seed: 0}

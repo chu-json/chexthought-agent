@@ -1,0 +1,26 @@
+# hints_mvp with the mock backend: free, for checking the pipeline end to end.
+name: hints_mvp_mock
+csv: ~/Downloads/chexthoughtdataset.csv
+image_root: ~/data/chexpert_plus
+seed: 0
+n_images: 100
+n_normal: 50
+label_batch: 100
+max_labeled: 1500
+image_long_edge: 1024
+conditions: [no_hint, no_hint_rerun, own_trail, other_trail, random_trail, leak_check]
+
+labeler: {backend: mock, model: mock, max_tokens: 16000, temperature: null}
+reader: {backend: mock, model: mock, max_tokens: 16000, temperature: null}
+
+concurrency: 8
+requests_per_minute: 100000
+max_usd: 1
+spend_file: outputs/hints_mvp_mock/spend.json
+prices_per_mtok:
+  mock: {input: 0.0, output: 0.0}
+
+cache_dir: outputs/cache
+output_dir: outputs/hints_mvp_mock
+sample_file: outputs/hints_mvp/sample.json  # run on the real sample (its images are downloaded); sample.build writes its own
+bootstrap: {n: 200, seed: 0}

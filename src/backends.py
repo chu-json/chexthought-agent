@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import random
+import threading
 from dataclasses import dataclass, field
 
 from . import boxes as bx
@@ -145,6 +146,53 @@ class OpenAICompatibleBackend(OpenAIBackend):
         return {"base_url": self.cfg["base_url"], "api_key": self.cfg.get("api_key", "EMPTY")}
 
 
+class TransformersBackend(Backend):
+    """A local Hugging Face vision-language model, e.g. google/medgemma-1.5-4b-it, on a CUDA GPU.
+
+    Loaded once per process in `dtype` (bf16 by default); a lock keeps one generate on the GPU at a time, so
+    run with concurrency 1. With do_sample on, each request is an independent sample (no_hint_rerun differs
+    from no_hint as an API rerun would); with it off, decoding is greedy. Responses are cached like any other
+    backend's, so rescoring never regenerates.
+    """
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        import torch
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+        self.torch = torch
+        self.dtype = getattr(torch, cfg.get("dtype", "bfloat16"))
+        self.processor = AutoProcessor.from_pretrained(self.model)
+        self.net = AutoModelForImageTextToText.from_pretrained(
+            self.model, dtype=self.dtype, device_map=cfg.get("device", "cuda")).eval()
+        self.lock = threading.Lock()
+
+    def settings(self):
+        return super().settings() | {k: self.cfg.get(k) for k in ("do_sample", "top_p", "top_k", "dtype")}
+
+    def generate_kwargs(self):
+        kwargs = {"max_new_tokens": self.cfg["max_tokens"], "do_sample": bool(self.cfg.get("do_sample"))}
+        if kwargs["do_sample"]:
+            kwargs |= {k: self.cfg[k] for k in ("temperature", "top_p", "top_k") if self.cfg.get(k) is not None}
+        return kwargs
+
+    def call(self, system, parts, role):
+        content = [{"type": "text", "text": p} if isinstance(p, str) else {"type": "image", "image": p.convert("RGB")}
+                   for p in parts]
+        messages = [{"role": "system", "content": [{"type": "text", "text": system}]},
+                    {"role": "user", "content": content}]
+        inputs = self.processor.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt",
+        ).to(self.net.device, dtype=self.dtype)  # dtype applies to floating tensors (pixels) only
+        n_in = inputs["input_ids"].shape[-1]
+        kwargs = self.generate_kwargs()
+        with self.lock, self.torch.inference_mode():
+            out = self.net.generate(**inputs, **kwargs)[0][n_in:]
+        text = self.processor.decode(out, skip_special_tokens=True)
+        stop = "max_tokens" if len(out) >= kwargs["max_new_tokens"] else "end_turn"
+        raw = {"text": text, "generate_kwargs": kwargs, "input_tokens": n_in, "output_tokens": len(out)}
+        return Response(text, stop, n_in, len(out), raw)
+
+
 class MockBackend(Backend):
     """Deterministic fake outputs for tests, seeded by a hash of the request.
 
@@ -164,6 +212,8 @@ class MockBackend(Backend):
             text, stop = "Here is my report: {not valid json", "end_turn"
         elif role == "helper":
             text, stop = self._helper(rng, *images[0].size, labeled='"suspected_finding"' in prompt), "end_turn"
+        elif role == "labeler":
+            text, stop = self._labeler(rng), "end_turn"
         else:
             text, stop = self._reader(rng, prompt), "end_turn"
         in_tokens = (len(system) + len(prompt)) // 4 + 1100 * len(images)
@@ -174,7 +224,7 @@ class MockBackend(Backend):
         if "Your earlier report:\n" in prompt:
             earlier = json.loads(prompt.split("Your earlier report:\n", 1)[1].split("\n\n", 1)[0])
         findings = {}
-        for f in FINDINGS:
+        for f in self.cfg.get("findings", FINDINGS):
             if earlier:  # pass 2: flip some answers
                 present = earlier["findings"][f]["present"]
                 if rng.random() < 0.15:
@@ -184,6 +234,13 @@ class MockBackend(Backend):
             prob = rng.randint(55, 95) if present == "yes" else rng.randint(2, 45)
             findings[f] = {"present": present, "probability": prob, "location": "mock" if present == "yes" else ""}
         return json.dumps({"findings": findings, "reasoning": "mock"})
+
+    def _labeler(self, rng):
+        """hints_mvp report labels: about a third of reports normal, the rest with a few findings."""
+        normal = rng.random() < 0.3
+        labels = {f: "absent" if normal or rng.random() < 0.8 else rng.choice(["present", "present", "uncertain"])
+                  for f in self.cfg["findings"]}
+        return json.dumps({"labels": labels, "evidence": {f: "mock" for f, v in labels.items() if v != "absent"}})
 
     def _helper(self, rng, width, height, labeled):
         """v0 helper output has a label and reason per box; v1 is regions only."""
@@ -202,6 +259,7 @@ BACKENDS = {
     "anthropic": AnthropicBackend,
     "openai": OpenAIBackend,
     "openai_compatible": OpenAICompatibleBackend,
+    "transformers": TransformersBackend,
     "mock": MockBackend,
 }
 

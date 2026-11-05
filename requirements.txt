@@ -9,3 +9,5 @@ scipy
 matplotlib
 pytest
 # openai  # only needed for the openai / openai_compatible backends
+redivis  # hints_mvp: downloading the sampled CheXpert Plus images
+# torch, transformers>=5, accelerate  # only for the transformers backend (MedGemma on a CUDA GPU)
