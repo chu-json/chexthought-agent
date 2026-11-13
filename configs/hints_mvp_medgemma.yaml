@@ -26,7 +26,7 @@ reader:
   model: google/medgemma-1.5-4b-it
   dtype: bfloat16
   device: cuda
-  max_tokens: 2000              # max new tokens; a full report is about 700
+  max_tokens: 4000              # max new tokens: thinking (600-1400) plus a ~700-token report; 2000 cut off 2 of 10 answers
   do_sample: true               # each request is an independent sample, so no_hint_rerun is a real rerun
   temperature: 1.0              # Gemma 3's recommended sampling settings (Claude also runs at its default, 1.0)
   top_p: 0.95

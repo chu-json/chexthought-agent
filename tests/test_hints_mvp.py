@@ -53,6 +53,16 @@ def test_parse_reader_tolerant():
     assert out["Cardiomegaly"]["present"] == "yes" and out["Cardiomegaly"]["probability"] is None
 
 
+def test_parse_reader_skips_thinking():
+    """MedGemma 1.5 thinks first and often drafts JSON there; only the answer after <unused95> counts."""
+    obj = reader_json(Edema={"present": "yes", "probability": 90, "location": "bilateral"})
+    text = ('<unused94>thought\nDraft: {"findings": {"Edema": {"present": "no"}}} Check format. Yes.'
+            "<unused95>```json\n" + json.dumps(obj) + "\n```")
+    assert prompts.parse_reader(text)["findings"]["Edema"]["present"] == "yes"
+    with pytest.raises(ParseError, match="thinking"):
+        prompts.parse_reader('<unused94>thought\nStill thinking {"findings": ')
+
+
 def test_parse_reader_rejects_missing_or_bad():
     obj = reader_json()
     del obj["findings"]["Fracture"]

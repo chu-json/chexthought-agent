@@ -58,8 +58,23 @@ def reader_text(points=None, with_image=True):
 
 # --- Tolerant parsing: small local models (MedGemma) often bend the format. ---
 
+# MedGemma 1.5 may think first: "<unused94>thought ... <unused95>" and then the answer. The thinking often
+# drafts JSON, so only the text after the end-of-thought marker is parsed.
+THOUGHT_START, THOUGHT_END = "<unused94>", "<unused95>"
+
+
+def strip_thought(text):
+    if THOUGHT_END in text:
+        return text.rsplit(THOUGHT_END, 1)[1]
+    if THOUGHT_START in text:
+        raise ParseError("response ended inside the thinking block")
+    return text
+
+
 def loads_tolerant(text):
-    """The outermost JSON object in a response, tolerating code fences, text around it and trailing commas."""
+    """The outermost JSON object in a response, tolerating a thinking block, code fences, text around it and
+    trailing commas."""
+    text = strip_thought(text)
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end < start:
         raise ParseError("no JSON object in response")
