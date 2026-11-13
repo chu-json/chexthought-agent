@@ -16,6 +16,7 @@ cache/
 .venv/
 .venv-cxas/
 .venv-chexone/
+.venv-maira/
 __pycache__/
 *.pyc
 .pytest_cache/

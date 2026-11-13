@@ -1,0 +1,12 @@
+# .venv-maira: MAIRA-2 (microsoft/maira-2, gated; trust_remote_code). Its card: tested with transformers 4.51.3.
+#   uv venv --managed-python -p 3.12 .venv-maira && uv pip install -p .venv-maira/bin/python -r requirements-maira.txt
+torch==2.7.1
+transformers==4.51.3
+pillow
+protobuf
+sentencepiece
+accelerate
+pandas
+scipy
+pycocotools
+matplotlib
