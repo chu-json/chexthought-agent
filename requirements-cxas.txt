@@ -1,0 +1,6 @@
+# .venv-cxas: CXAS anatomy segmentation (src/trail_anatomy/segment.py). Separate env: cxas pins numpy 1.26.
+#   uv venv -p 3.12 .venv-cxas && uv pip install -p .venv-cxas/bin/python -r requirements-cxas.txt
+cxas
+torch
+torchvision
+gdown>=4.7,<6   # cxas downloads its weights with gdown(fuzzy=True), which gdown 6 removed

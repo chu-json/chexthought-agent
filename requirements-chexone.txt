@@ -1,0 +1,14 @@
+# .venv-chexone: CheXOne via vLLM, and the CheXbert labeler. Versions as the CheXOne authors recommend.
+# Needs a Python with headers (Triton compiles a launcher), e.g. uv's managed Python:
+#   uv venv --managed-python -p 3.12 .venv-chexone && uv pip install -p .venv-chexone/bin/python -r requirements-chexone.txt
+vllm==0.10.1.1
+transformers==4.56.2
+qwen-vl-utils
+f1chexbert      # CheXbert labeler; weights: hf download StanfordAIMI/RRG_scorers chexbert.pth --local-dir ~/.cache/chexbert
+pyyaml
+pandas
+scipy
+python-dotenv
+pillow
+pycocotools
+matplotlib
