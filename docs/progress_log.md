@@ -5,6 +5,36 @@ reports, labels or image ids (research use agreement). Machine: the Linux RTX 30
 
 ---
 
+## 2026-11-12 (evening): test sample, path analysis, predictor runs started
+
+**Done**
+- **Test sample:** 300 new images (200 with a finding, 100 normal), drawn with the hints_mvp rules, dev patients
+  excluded. CheXbert labeled 1,977 reports in candidate order, locally. 233 of the 300 images also have another
+  radiologist's usable path. All images downloaded from Redivis and segmented (67 s).
+- **Path analysis** (`src/trail_anatomy/analyze_paths.py`), 723 paths: 185 from dev images, 538 from test.
+  - Focus rule tuned on dev by agreement between radiologists, using no labels: α = 20, τ = 2.0, up to 3
+    regions, ≥ 3 clicks. About half of all paths have no focus region (test: 273 of 538). Sparse paths almost
+    never do (80% none); tracing paths most often do.
+  - **Radiologists agree beyond chance.** Two radiologists' focus regions on the same image overlap more than
+    on different images: Jaccard 0.361 vs 0.268, 243 test pairs, permutation p < 0.005 (dev: 0.335 vs 0.261,
+    p = 0.015). So focus regions carry modest image-specific information.
+  - **Written reasoning doesn't single out focus regions.** Radiologists name 67% of their focus regions and
+    68% of the other regions they clicked: they describe the whole chest either way.
+  - **Focus regions vs findings (test, own paths).** A focus region lies in the relevant area more often on
+    positive images for Pleural Effusion (0.43 vs 0.23), Pneumothorax (0.14 vs 0.01) and Enlarged
+    Cardiomediastinum (0.14 vs 0.05). It is flat for Lung Opacity, Atelectasis, Consolidation, Edema and
+    Cardiomegaly.
+  - This image's path has any focus region on 54.5% of finding images vs 38% of normal ones.
+- **Hints built** for dev and test. The report_regions ceiling names ≥ 1 region on 92% of finding images and
+  44% of normal ones (neutral mentions such as "trachea midline").
+- **CheXOne pilot**, 10 dev images × 11 conditions: 110 requests in 76 s. 2 answers got stuck repeating
+  themselves; fixed by applying CheXOne's own repetition penalty of 1.05, which vLLM ignores when sampling
+  settings are passed explicitly. The region outlines were checked visually.
+- **CheXOne full run started:** 300 × 11 = 3,300 requests, temperature 0.7.
+- MAIRA-2 weights downloaded (the token has access); its env is `.venv-maira` (transformers 4.51.3).
+
+---
+
 ## 2026-11-12: trail_anatomy setup, data, labeler
 
 **Done**
