@@ -5,6 +5,25 @@ reports, labels or image ids (research use agreement). Machine: the Linux RTX 30
 
 ---
 
+## 2026-11-17 (13:15): MAIRA-2 scored; all three predictors done; results page
+
+- **MAIRA-2** (transformers, greedy, hint in the indication field): 1,800 requests in 88 min, 300 of 300 scored.
+  No hint: sensitivity 0.582 [0.545, 0.617], specificity 0.894.
+- **Any indication text hurts it.** Δ sensitivity: neutral sentence −0.121 [−0.156, −0.088], focus own −0.179
+  [−0.214, −0.144], other −0.176, random −0.189, ceiling report_regions −0.166 [−0.204, −0.127]; specificity +0.04 to
+  +0.06. Findings per report fall from 2.48 to 1.4–1.8 at the same length: MAIRA-2 reads a non-symptom indication as
+  "routine" and writes a near-normal template, sometimes turning the hinted region into a finding ("right
+  hemidiaphragm is elevated"). It names a hinted region on 61–70% of reports vs 9–20% without.
+- **Overall conclusion across CheXOne, MedGemma, MAIRA-2:** no prompt-side location hint helps, not even the ceiling;
+  own is never better than other or random. CheXOne ignores hints, MedGemma is hurt by raw coordinates, MAIRA-2 by
+  any indication text.
+- Results page (aggregate numbers, simulated illustrations): https://claude.ai/artifact/E5bLD8VtFMkYLHYNyjPEa3
+- Local-only interactive page with real X-rays, every hint and all three models' reports:
+  `outputs/trail_anatomy/examples/examples.html` (built by `src/trail_anatomy/examples.py`; never commit or upload).
+- Tables: [results/trail_anatomy_maira.md](results/trail_anatomy_maira.md).
+
+---
+
 ## 2026-11-17 (11:05): MedGemma scored; MAIRA-2 running
 
 - **MedGemma 1.5 via vLLM**: 3,296 requests in 24 min (vs 14 h one at a time before); 300 of 300 images scored,

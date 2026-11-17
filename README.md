@@ -10,7 +10,7 @@ chest X-ray findings? Nothing is fine-tuned; every experiment compares paired co
 | 1 | **v0** second look (CheXlocalize, Sonnet 5.5) | Does a helper boxing likely misses help the reader revise? | The reader's problem was over-calling (180 false positives vs 40 misses on 100 images), not misses. |
 | 2 | **v1** neutral wording, fresh read | Same, with cleaner controls | Helper boxes cut specificity by 0.154 with no sensitivity gain: the reader treats boxes as findings. |
 | 3 | **hints_mvp** (CheXthought + CheXpert Plus, 100 images) | Does the radiologist's raw click trail, as coordinates, help? | Sonnet: no gain (−0.012). MedGemma 1.5: worse (−0.073). Own, other and random trails act alike. |
-| 4 | **trail_anatomy** (300 images; CheXOne, MedGemma, MAIRA-2) | Do standardized, anatomy-based paths help? | The paths carry real signal (radiologists agree beyond chance), but no model uses it, not even with the true regions. |
+| 4 | **trail_anatomy** (300 images; CheXOne, MedGemma, MAIRA-2) | Do standardized, anatomy-based paths help? | The paths carry real signal (radiologists agree beyond chance), but no model uses it, not even with the true regions. MAIRA-2 is hurt by any hint. |
 
 Running log: [docs/progress_log.md](docs/progress_log.md). Result tables: [docs/results/](docs/results/).
 Rules for agents (push to `main` often, never commit patient data): [AGENTS.md](AGENTS.md).
@@ -212,7 +212,11 @@ Findings (300 test images, 200 with a finding; labels by local CheXbert, no API 
 - **MedGemma 1.5** (0.473): raw coordinates hurt, −0.062 [−0.096, −0.029]; standardized hints neutral (−0.016 to
   +0.022, n.s.); ceiling −0.009.
 - Both models repeat hinted regions in their text (MedGemma 42% vs 18% without) but their findings don't change.
-- **MAIRA-2** (hint in its indication field, greedy): in progress.
+- **MAIRA-2** (0.582; hint in its indication field, greedy): any text there hurts, even a neutral sentence (−0.121);
+  focus hints −0.18 to −0.19 and the ceiling −0.166. It falls back to near-normal template reports.
+
+Results page: https://claude.ai/artifact/E5bLD8VtFMkYLHYNyjPEa3. Real-image examples (local only):
+`python -m src.trail_anatomy.examples` → `outputs/trail_anatomy/examples/examples.html`.
 
 Envs: `.venv-cxas` (segmentation), `.venv-chexone` (vLLM, CheXbert, scoring), `.venv-maira`. Run:
 `python -m src.trail_anatomy.run_vllm --model chexone`, then `python -m src.trail_anatomy.score --model chexone`.
