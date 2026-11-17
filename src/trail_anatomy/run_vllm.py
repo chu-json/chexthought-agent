@@ -53,9 +53,9 @@ MODELS = {
                  "llm": {"max_model_len": 8192, "limit_mm_per_prompt": {"image": 2}}},
     # CheXthought's base model. FP8 (Qwen's own checkpoint) so the KV cache fits long thinking on a 24 GB card;
     # sampling as on the model card; the paper's reasoning prompt (its §4.2.1).
-    "qwen3": {"hf": "Qwen/Qwen3-VL-8B-Thinking-FP8", "max_tokens": 6000, "temperature": 1.0, "top_p": 0.95, "top_k": 20,
+    "qwen3": {"hf": "Qwen/Qwen3-VL-8B-Thinking-FP8", "max_tokens": 12000, "temperature": 1.0, "top_p": 0.95, "top_k": 20,
               "instruction": "Interpret this chest X-ray and provide step-by-step diagnostic reasoning followed by your final findings.",
-              "llm": {"max_model_len": 10240, "limit_mm_per_prompt": {"image": 1},
+              "llm": {"max_model_len": 14336, "limit_mm_per_prompt": {"image": 1},
                       "mm_processor_kwargs": {"min_pixels": 256 * 28 * 28, "max_pixels": 640 * 640}}},
     # Run by run_maira.py (transformers, its own env), not vLLM; listed here so score.py finds its settings.
     "maira": {"hf": "microsoft/maira-2", "max_tokens": 300, "temperature": 0.0},
@@ -111,7 +111,9 @@ def extract_report(text, model):
     if model == "medgemma":
         return text.rsplit("<unused95>", 1)[-1].strip() if "<unused94>" in text else text.strip()
     if model == "qwen3":  # the answer after the thinking block; from a "final findings" heading on, if there is one
-        ans = text.rsplit("</think>", 1)[-1] if "</think>" in text else ("" if "<think>" in text else text)
+        if "</think>" not in text:  # the template opens <think> in the prompt: no end tag = cut off while thinking
+            return ""
+        ans = text.rsplit("</think>", 1)[-1]
         hits = list(re.finditer(r"final (?:findings|impression|diagnos[ie]s|answer)", ans, re.I))
         return (ans[hits[-1].end():] if hits else ans).strip(" :*#\n")
     k = text.rfind("\\boxed{")
