@@ -5,6 +5,26 @@ reports, labels or image ids (research use agreement). Machine: the Linux RTX 30
 
 ---
 
+## 2026-11-17 (14:00): CheXthought replication on Qwen3-VL-8B-Thinking started
+
+- **What the paper did** (arXiv 2604.26288 §4.3.2): base Qwen3-VL-8B-Thinking and MedGemma 1.5 got the search trajectory
+  "encoded as structured text" with a Broad / Central / Narrow strategy label; control = uniform random dots; 300 images
+  (150/150); results stratified by the no-hint read (Table 4): e.g. Narrow 70% "recovery" of missed cases vs 12% random
+  (Qwen). Hint wording, features and decoding are not published; there is no identical-rerun control.
+- **Rerun control matters**: on our MedGemma run, an identical second request already "recovers" 24% of
+  pathology-missed images and fixes 21% of normal images with false findings (regression to the mean).
+  `src/trail_anatomy/score_strata.py` reproduces Table 4 with that rerun row.
+- **Setup**: `.venv-qwen3` (vLLM 0.11.0, transformers pinned 4.57.1; 5.x breaks vLLM's tokenizer). Qwen's FP8 checkpoint
+  so long thinking fits on 24 GB. Paper's prompt ("Interpret this chest X-ray and provide step-by-step diagnostic
+  reasoning followed by your final findings."), model-card sampling (T 1.0, top_p 0.95, top_k 20), max 12,000 tokens.
+  Strategy labels by k-means on coverage / central share / spread (`strategy.py`; our split 33% Broad, 20% Central,
+  47% Narrow). Conditions: no_hint, no_hint_rerun, strategy_own / _other / _random, focus_text_own (1,800 requests).
+- Pilot (10 images, 6,000-token cap): 19 s/request; 13 of 60 cut off, 10 of them on trajectory hints, so the cap went to
+  12,000. Full run started; expect ~10 h.
+- Team figure script `src/trail_anatomy/figure.py` (real image, local output only).
+
+---
+
 ## 2026-11-17 (13:15): MAIRA-2 scored; all three predictors done; results page
 
 - **MAIRA-2** (transformers, greedy, hint in the indication field): 1,800 requests in 88 min, 300 of 300 scored.
