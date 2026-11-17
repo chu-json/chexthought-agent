@@ -20,7 +20,7 @@ import numpy as np
 from ..hints_mvp.data import FINDINGS
 from ..hints_mvp.score import changes, metrics
 from . import regions_text as RT
-from .run_vllm import CONDITIONS, MODELS
+from .run_vllm import CONDITIONS, MODELS, QWEN3_CONDITIONS
 
 OUT = Path("outputs/trail_anatomy")
 REF = "no_hint"

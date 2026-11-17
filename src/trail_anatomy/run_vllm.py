@@ -18,6 +18,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import time
 from pathlib import Path
 
@@ -29,6 +30,18 @@ from . import focus as F
 CONDITIONS = ["no_hint", "no_hint_rerun", "neutral_text", "coords_own", "focus_text_own", "focus_text_other",
               "focus_text_random", "focus_text_own_assist", "focus_mask_own", "focus_mask_other", "report_regions"]
 NEUTRAL = "This chest X-ray was acquired as part of routine clinical care."
+# Replication of CheXthought §4.3.2 on its base model (Qwen3-VL-8B-Thinking): the trajectory as structured text with
+# a Broad / Central / Narrow strategy label (strategy.py), from this image (own), another image (other) or uniform
+# random points (random, the paper's control). Run with --conditions no_hint no_hint_rerun strategy_own ...
+QWEN3_CONDITIONS = ["no_hint", "no_hint_rerun", "strategy_own", "strategy_other", "strategy_random", "focus_text_own"]
+_STRATEGY = None
+
+
+def strategy_model():
+    global _STRATEGY
+    if _STRATEGY is None:
+        _STRATEGY = json.load(open("outputs/trail_anatomy/strategy.json"))
+    return _STRATEGY
 
 MODELS = {
     "chexone": {"hf": "StanfordAIMI/CheXOne", "max_tokens": 3000, "temperature": 0.7, "top_p": 0.9, "repetition_penalty": 1.05,
@@ -38,10 +51,16 @@ MODELS = {
     "medgemma": {"hf": "google/medgemma-1.5-4b-it", "max_tokens": 4000, "temperature": 1.0, "top_p": 0.95, "top_k": 64,
                  "instruction": "Write the findings section of the radiology report for this chest X-ray.",
                  "llm": {"max_model_len": 8192, "limit_mm_per_prompt": {"image": 2}}},
+    # CheXthought's base model. FP8 (Qwen's own checkpoint) so the KV cache fits long thinking on a 24 GB card;
+    # sampling as on the model card; the paper's reasoning prompt (its §4.2.1).
+    "qwen3": {"hf": "Qwen/Qwen3-VL-8B-Thinking-FP8", "max_tokens": 6000, "temperature": 1.0, "top_p": 0.95, "top_k": 20,
+              "instruction": "Interpret this chest X-ray and provide step-by-step diagnostic reasoning followed by your final findings.",
+              "llm": {"max_model_len": 10240, "limit_mm_per_prompt": {"image": 1},
+                      "mm_processor_kwargs": {"min_pixels": 256 * 28 * 28, "max_pixels": 640 * 640}}},
     # Run by run_maira.py (transformers, its own env), not vLLM; listed here so score.py finds its settings.
     "maira": {"hf": "microsoft/maira-2", "max_tokens": 300, "temperature": 0.0},
 }
-VLLM_MODELS = ["chexone", "medgemma"]
+VLLM_MODELS = ["chexone", "medgemma", "qwen3"]
 
 
 def data_url(im):
@@ -70,6 +89,10 @@ def request(cond, s, h, image, model):
         hint = F.focus_text(h["focus_own"], assist=True)
     elif cond == "report_regions":
         hint = F.focus_text(h["report_regions"])
+    elif cond in ("strategy_own", "strategy_other", "strategy_random"):
+        from .strategy import label, trajectory_text
+        pts = s["trails"][cond.split("_")[1]]["points"]
+        hint = trajectory_text(pts, label(pts, strategy_model()))
     elif cond in ("focus_mask_own", "focus_mask_other"):
         regions = h[cond.replace("_mask", "")]
         if not regions:
@@ -87,6 +110,10 @@ def extract_report(text, model):
     """The final report: CheXOne's last \\boxed{...}; MedGemma's text after its thinking block."""
     if model == "medgemma":
         return text.rsplit("<unused95>", 1)[-1].strip() if "<unused94>" in text else text.strip()
+    if model == "qwen3":  # the answer after the thinking block; from a "final findings" heading on, if there is one
+        ans = text.rsplit("</think>", 1)[-1] if "</think>" in text else ("" if "<think>" in text else text)
+        hits = list(re.finditer(r"final (?:findings|impression|diagnos[ie]s|answer)", ans, re.I))
+        return (ans[hits[-1].end():] if hits else ans).strip(" :*#\n")
     k = text.rfind("\\boxed{")
     if k < 0:
         return text.split("Final Answer", 1)[-1].strip(" :*\n")
