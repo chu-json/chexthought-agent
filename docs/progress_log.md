@@ -5,6 +5,23 @@ reports, labels or image ids (research use agreement). Machine: the Linux RTX 30
 
 ---
 
+## 2026-11-17 (11:05): MedGemma scored; MAIRA-2 running
+
+- **MedGemma 1.5 via vLLM**: 3,296 requests in 24 min (vs 14 h one at a time before); 300 of 300 images scored,
+  9 outputs truncated. Baseline sensitivity 0.473 [0.438, 0.514], specificity 0.935. An identical rerun moves
+  sensitivity by +0.013 [−0.020, +0.046], so MedGemma is much noisier than CheXOne.
+- **Raw coordinates hurt again**: coords_own Δ sensitivity −0.062 [−0.096, −0.029] (specificity +0.016): with a wall of
+  numbers MedGemma reports fewer findings overall. This repeats hints_mvp (−0.073).
+- **Standardized focus hints are harmless but don't help**: focus_text_own −0.016 [−0.057, +0.023], other +0.000,
+  random −0.003; outlined image own +0.022 [−0.014, +0.057], other +0.016. Ceiling report_regions −0.009
+  [−0.043, +0.024]. Own is never better than other/random.
+- MedGemma names a hinted region far more than CheXOne (42% own, 39% random vs 18% / 5% without the hint):
+  it follows the hint in words, not in findings.
+- Tables: [results/trail_anatomy_medgemma.md](results/trail_anatomy_medgemma.md).
+- MAIRA-2 (transformers, greedy): ~3 s per request, 1,800 requests, about 1.5 h.
+
+---
+
 ## 2026-11-17: CheXOne scored; MedGemma and MAIRA-2 running
 
 **Done**
