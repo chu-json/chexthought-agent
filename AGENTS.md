@@ -8,6 +8,8 @@ branch is invisible to them.
 - Commit small and often. After every milestone (a run finishes, a result is scored, a doc is updated),
   **merge into `main` and `git push origin main`**. Feature branches are fine for work in progress, but
   don't let `main` fall behind by more than a few hours of work.
+- Update main without switching branches (`git push origin <branch>:main`, or `git branch -f main <branch>` after a
+  fast-forward check): `git checkout` swaps files under `src/` and breaks background jobs that import from it.
 - Keep `docs/progress_log.md` up to date (newest first) and push it with each milestone. It is the one place
   the owner reads to catch up.
 - Put aggregate results that the owner needs (tables of metrics, CIs) in `docs/` so they reach GitHub;
