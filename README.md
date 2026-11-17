@@ -1,7 +1,24 @@
 # cxr-second-look
 
+Can extra guidance (a helper's boxes, or a radiologist's search path) make a vision-language model write better
+chest X-ray findings? Nothing is fine-tuned; every experiment compares paired conditions on the same images.
+
+## Projects at a glance
+
+| # | Project | Question | Result |
+|---|---|---|---|
+| 1 | **v0** second look (CheXlocalize, Sonnet 5.5) | Does a helper boxing likely misses help the reader revise? | The reader's problem was over-calling (180 false positives vs 40 misses on 100 images), not misses. |
+| 2 | **v1** neutral wording, fresh read | Same, with cleaner controls | Helper boxes cut specificity by 0.154 with no sensitivity gain: the reader treats boxes as findings. |
+| 3 | **hints_mvp** (CheXthought + CheXpert Plus, 100 images) | Does the radiologist's raw click trail, as coordinates, help? | Sonnet: no gain (−0.012). MedGemma 1.5: worse (−0.073). Own, other and random trails act alike. |
+| 4 | **trail_anatomy** (300 images; CheXOne, MedGemma, MAIRA-2) | Do standardized, anatomy-based paths help? | The paths carry real signal (radiologists agree beyond chance), but no model uses it, not even with the true regions. |
+
+Running log: [docs/progress_log.md](docs/progress_log.md). Result tables: [docs/results/](docs/results/).
+Rules for agents (push to `main` often, never commit patient data): [AGENTS.md](AGENTS.md).
+
+## v0 / v1: a helper's boxes as a second look
+
 Does a "helper" model that flags likely-missed regions help a "reader" model catch more findings on chest X-rays?
-Both are vision-language models called through APIs; nothing is fine-tuned.
+Both are vision-language models called through APIs.
 
 **Design (a second look):**
 1. **Pass 1:** the reader reads the image alone and fills in a structured report.
@@ -169,6 +186,36 @@ covers labels and every Claude call.
 findings on the 50 normal images from 88 to 67–68 (specificity +0.020 to +0.027), whatever its source, so that comes
 from adding the trail text, not from where the radiologist looked. Without the image, the coordinates carry a little
 information (within-finding J +0.047 [+0.013, +0.093], mostly Lung Opacity and Pleural Effusion).
+
+**Result with MedGemma 1.5 4B** (local GPU, 82 images scored): own_trail −0.073 [−0.148, −0.007] sensitivity; other
+−0.057, random −0.049, identical rerun −0.033. Tables: [docs/results/hints_mvp_medgemma.md](docs/results/hints_mvp_medgemma.md).
+
+## trail_anatomy: standardized search paths as anatomy hints
+
+Code in [src/trail_anatomy/](src/trail_anatomy/), plan in [docs/trail_anatomy_spec.md](docs/trail_anatomy_spec.md).
+Radiologists click very differently (tracing, searching, sparse), so raw paths are turned into a few named regions:
+1. **Segment** each X-ray with CXAS (159 structures), merged into 16 regions (trachea, hila, heart, mediastinum,
+   lungs in upper/mid/lower thirds, hemidiaphragms, clavicles, spine, abdomen, other).
+2. **Count** clicks per region and compare to the average path's share, shrunk toward it for short paths:
+   q = (c + 20·b) / (n + 20). A region is a **focus region** if q ≥ 2·b and it has ≥ 3 clicks; at most 3.
+   Paths that click everywhere evenly get none. Parameters tuned on dev images for agreement between radiologists,
+   without labels.
+3. **Hint**: "A radiologist who read this X-ray spent more attention than usual on …", or the regions outlined
+   on a second image.
+
+Findings (300 test images, 200 with a finding; labels by local CheXbert, no API cost):
+- Two radiologists' focus regions on the same image overlap more than on different images (Jaccard 0.361 vs 0.268,
+  p < 0.005). Focus regions track effusion and pneumothorax, not opacity or edema.
+- 11 conditions per model: no hint, rerun, neutral sentence, raw coordinates, focus text (own / other / random /
+  "assist" wording), outlined regions (own / other), and a ceiling with the regions the report names.
+- **CheXOne** (sensitivity 0.605 without hints): every hint within ±0.006, the size of a rerun; ceiling +0.001.
+- **MedGemma 1.5** (0.473): raw coordinates hurt, −0.062 [−0.096, −0.029]; standardized hints neutral (−0.016 to
+  +0.022, n.s.); ceiling −0.009.
+- Both models repeat hinted regions in their text (MedGemma 42% vs 18% without) but their findings don't change.
+- **MAIRA-2** (hint in its indication field, greedy): in progress.
+
+Envs: `.venv-cxas` (segmentation), `.venv-chexone` (vLLM, CheXbert, scoring), `.venv-maira`. Run:
+`python -m src.trail_anatomy.run_vllm --model chexone`, then `python -m src.trail_anatomy.score --model chexone`.
 
 ## Ideas for later
 
