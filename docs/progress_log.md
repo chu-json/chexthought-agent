@@ -5,6 +5,33 @@ reports, labels or image ids (research use agreement). Machine: the Linux RTX 30
 
 ---
 
+## 2026-11-17: CheXOne scored; MedGemma and MAIRA-2 running
+
+**Done**
+- **CheXOne full run finished** (it had completed on 2026-11-12 in 19.5 min; nothing ran in between because the session
+  had stopped). 3,300 of 3,300 requests; 300 of 300 images scored; 15 outputs hit the token limit (0–6 per condition).
+- **Result: no hint changes CheXOne at all.** Baseline sensitivity 0.605 [0.568, 0.643], specificity 0.943. Every
+  condition's Δ sensitivity is within ±0.006 of no_hint, the same size as an identical rerun (−0.006
+  [−0.017, +0.004]). Even the ceiling (report_regions, regions taken from the real report) gives +0.001
+  [−0.011, +0.013]. The outlined-image hints (focus_mask_own / _other) cost a little specificity (−0.005
+  [−0.009, −0.001] and −0.004 [−0.008, −0.001]) and help nothing.
+- **CheXOne does read the hints, a little.** With a focus hint, its report names a hinted region on 31% (own) /
+  29% (other) / 22% (random) of images vs 20% / 14% / 1% without the hint. It mentions the region, but its
+  findings don't change.
+- **Same on the 147 images whose own path has a focus region** (where the hints actually differ): all Δs within
+  ±0.012, focus_mask_own specificity −0.011 [−0.018, −0.003].
+- Full tables: [results/trail_anatomy_chexone.md](results/trail_anatomy_chexone.md). hints_mvp MedGemma tables copied to
+  [results/hints_mvp_medgemma.md](results/hints_mvp_medgemma.md).
+- MedGemma via vLLM tested on 2 images (works, ~4 s per request batched; no thinking block in this mode).
+- Added `AGENTS.md` / `CLAUDE.md`: every agent must push milestones to `main`.
+- **Blocker: this PC can't push to GitHub** (no credentials: no gh, no SSH key, no token). Commits are on local
+  `main` and `trail-anatomy` until the owner sets up push access.
+
+**Running** (`outputs/trail_anatomy/run_rest.sh`): MedGemma 300 × 11 conditions, then scoring, then MAIRA-2
+300 × 6 conditions, then scoring.
+
+---
+
 ## 2026-11-12 (evening): test sample, path analysis, predictor runs started
 
 **Done**

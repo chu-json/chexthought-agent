@@ -104,8 +104,14 @@ CIs, uncertain counted as positive and separately left out.
 | 6 | focus_text_random | random regions, as many as the own path's, drawn with each region's dev-set focus frequency, so naming common regions earns nothing |
 | 7 | focus_mask_own | the image plus a second copy with the focus regions outlined |
 | 8 | focus_mask_other | the same with another image's focus regions |
-| 9 | report_regions | regions where the report puts its findings, mapped onto the same 15 regions by Sonnet: a **ceiling** for anatomy hints |
+| 9 | report_regions | regions named in the report's positive findings/impression sentences, mapped onto the same 15 regions by a local keyword lexicon (`regions_text.py`, no API), up to 3: a **ceiling** for anatomy hints |
 | 10 | focus_text_own_assist | condition 4 with the previous researcher's framing ("use these … to assist you in the findings") instead of the neutral wording |
+| 11 | neutral_text | an uninformative sentence ("This chest X-ray was acquired as part of routine clinical care."): the effect of adding any text |
+
+As run: CheXOne at temperature 0.7, top_p 0.9, repetition penalty 1.05 (its own generation config), max 3,000 tokens;
+MedGemma 1.5 at temperature 1.0, top_p 0.95, top_k 64, max 4,000 tokens (both via vLLM). MAIRA-2 takes hints only in
+its indication field, decodes greedily (so an identical rerun is identical), and runs 6 conditions: no_hint,
+neutral_text (its noise floor), focus_text_own / _other / _random and report_regions.
 
 Main comparisons:
 - **4 vs 1, against the 2 vs 1 noise floor:** do focus regions help at all?
