@@ -73,73 +73,82 @@ def calls(lab):
     return [f for f in FINDINGS if lab and lab[f] != "absent"] if lab else None
 
 
+CONDS = [("no_hint", "No hint"), ("neutral_text", "Meaningless sentence"), ("coords_own", "Raw dots as numbers"),
+         ("focus_text_own", "Focus areas, this X-ray"), ("focus_text_other", "Focus areas, another X-ray"),
+         ("focus_text_random", "Random areas"), ("focus_text_own_assist", "Focus + 'assist you'"),
+         ("focus_mask_own", "Outlined, this X-ray"), ("focus_mask_other", "Outlined, another X-ray"),
+         ("report_regions", "Cheat: report areas")]
+
+
+def hint_of(cond, h):
+    from ..hints_mvp.prompts import trail_text
+    from .run_vllm import NEUTRAL
+    return {"no_hint": "", "neutral_text": NEUTRAL, "coords_own": trail_text(h["coords_own"]),
+            "focus_text_own": F.focus_text(h["focus_own"]), "focus_text_other": F.focus_text(h["focus_other"]),
+            "focus_text_random": F.focus_text(h["focus_random"]), "focus_text_own_assist": F.focus_text(h["focus_own"], assist=True),
+            "focus_mask_own": F.MASK_INTRO if h["focus_own"] else F.EVEN_SENTENCE,
+            "focus_mask_other": F.MASK_INTRO if h["focus_other"] else F.EVEN_SENTENCE,
+            "report_regions": F.focus_text(h["report_regions"])}[cond]
+
+
+def regions_of_cond(cond, h):
+    return {"focus_text_own": h["focus_own"], "focus_text_own_assist": h["focus_own"], "focus_mask_own": h["focus_own"],
+            "focus_text_other": h["focus_other"], "focus_mask_other": h["focus_other"],
+            "focus_text_random": h["focus_random"], "report_regions": h["report_regions"]}.get(cond, [])
+
+
+def build_example(s, h, b, params, models):
+    i = s["image_id"]
+    im = data.load_image("~/data/chexpert_plus", i, 1024).convert("RGB")
+    lab = A.load_partition(OUT / "masks", i)
+    pts = s["trails"]["own"]["points"]
+    c = F.counts(pts, lab)
+    e = F.enrichment(c.astype(float), b, params["alpha"])
+    ref = [f for f in FINDINGS if s["labels"][f] != "absent"]
+    imgs = {"plain": b64(im, 560), "dots": b64(dots(im, pts), 560), "seg": b64(dots(regions_overlay(im, lab), pts), 560)}
+    for key in ("focus_own", "focus_other", "focus_random", "report_regions"):
+        imgs[key] = b64(F.outline_image(im, lab, h[key]) if h[key] else im, 560)
+    conds = []
+    for cond, name in CONDS:
+        reps = []
+        for m, (recs, labs) in models.items():
+            r = recs.get((i, cond))
+            if r:
+                got = calls(labs.get((i, cond)))
+                reps.append({"model": m, "report": r["report"], "calls": got, "trunc": r.get("finish_reason") == "length"})
+        conds.append({"id": cond, "name": name, "hint": hint_of(cond, h), "regions": regions_of_cond(cond, h), "reports": reps})
+    return {"id": i, "group": s["group"], "style": style(A.describe(pts, lab)), "n": len(pts), "ref": ref,
+            "report": s.get("report", ""), "imgs": imgs, "conds": conds,
+            "table": [{"r": A.NAMES[r], "c": int(c[r]), "share": float(c[r] / max(c.sum(), 1)), "b": float(b[r]), "e": float(e[r])}
+                      for r in np.argsort(-e) if c[r] > 0], "focus": h["focus_own"]}
+
+
+TEMPLATE = Path(__file__).with_name("examples_template.html")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=6)
+    ap.add_argument("--n", type=int, default=12)
     a = ap.parse_args()
     sample = json.load(open(OUT / "test/sample.json"))
     hints = json.load(open(OUT / "test/hints.json"))
     fp = json.load(open(OUT / "focus_params.json"))
     b = np.array([fp["baseline"][n] for n in A.NAMES])
     models = {m: records(m) for m in ("chexone", "medgemma", "maira") if (OUT / "cache" / m).exists()}
-    # One example per style, with and without a focus region, preferring images with a finding.
     by = {}
-    for s in sample:
+    for s in sample:  # per style: images with a finding, with and without a focus region; plus a normal one
         lab = A.load_partition(OUT / "masks", s["image_id"])
-        pts = s["trails"]["own"]["points"]
-        st = style(A.describe(pts, lab))
-        key = (st, bool(hints[s["image_id"]]["focus_own"]))
-        if s["group"] == "finding" and len(by.setdefault(key, [])) < 2:
+        st = style(A.describe(s["trails"]["own"]["points"], lab))
+        key = (st, s["group"], bool(hints[s["image_id"]]["focus_own"]))
+        if len(by.setdefault(key, [])) < (2 if s["group"] == "finding" else 1):
             by[key].append(s)
-    picks = [s for k in sorted(by) for s in by[k]][: a.n]
-    parts = []
-    for s in picks:
-        i = s["image_id"]
-        im = data.load_image("~/data/chexpert_plus", i, 1024).convert("RGB")
-        lab = A.load_partition(OUT / "masks", i)
-        pts = s["trails"]["own"]["points"]
-        foc = hints[i]["focus_own"]
-        c = F.counts(pts, lab)
-        e = F.enrichment(c.astype(float), b, fp["params"]["alpha"])
-        st = style(A.describe(pts, lab))
-        rows = "".join(f"<tr{' class=f' if A.NAMES[r] in foc else ''}><td>{A.NAMES[r]}</td><td>{c[r]}</td>"
-                       f"<td>{c[r] / max(c.sum(), 1):.0%}</td><td>{b[r]:.1%}</td><td>{e[r]:.2f}×</td></tr>"
-                       for r in np.argsort(-e) if c[r] > 0)
-        ref = [f for f in FINDINGS if s["labels"][f] != "absent"]
-        reps = ""
-        for m, (recs, labs) in models.items():
-            for cond, name in SHOW:
-                r = recs.get((i, cond))
-                if not r:
-                    continue
-                got = calls(labs.get((i, cond)))
-                tag = "" if got is None else " · calls: " + (", ".join(
-                    f"<b class={'hit' if g in ref else 'miss'}>{g}</b>" for g in got) or "none")
-                reps += f"<details><summary>{m} · {name}{tag}</summary><pre>{html.escape(r['report'])}</pre></details>"
-        parts.append(f"""<section><h2>{i} · {st} path · {len(pts)} dots</h2>
-<p><b>Real report's findings:</b> {', '.join(ref) or 'none'}<br><b>Focus areas:</b> {', '.join(foc) or 'none (spread evenly)'}
-· <b>another X-ray's:</b> {', '.join(hints[i]['focus_other']) or 'none'} · <b>report areas:</b> {', '.join(hints[i]['report_regions']) or 'none'}</p>
-<div class=row><figure><img src="{b64(dots(im, pts))}"><figcaption>Raw dots</figcaption></figure>
-<figure><img src="{b64(regions_overlay(im, lab))}"><figcaption>CXAS regions (16 areas)</figcaption></figure>
-<figure><img src="{b64(dots(F.outline_image(im, lab, foc) if foc else im, pts))}"><figcaption>Focus areas outlined</figcaption></figure></div>
-<table><tr><th>Area</th><th>Dots</th><th>This path</th><th>Average</th><th>Adjusted vs average</th></tr>{rows}</table>
-<h3>Model reports (green = real finding, red = false finding)</h3>{reps}
-<details><summary>Real report</summary><pre>{html.escape(s.get('report', ''))}</pre></details></section>""")
-    page = f"""<!doctype html><meta charset=utf-8><title>Real examples (local only)</title><style>
-body{{font:15px/1.5 system-ui;max-width:1100px;margin:auto;padding:16px;background:#f6f7f9;color:#15191f}}
-.warn{{background:#fde8e4;padding:10px 14px;border-radius:8px}} section{{background:#fff;border-radius:10px;padding:16px;margin:20px 0}}
-.row{{display:flex;flex-wrap:wrap;gap:10px}} figure{{margin:0;flex:1;min-width:250px}} img{{width:100%;border-radius:6px}}
-figcaption{{font-size:13px;color:#555}} table{{border-collapse:collapse;font-size:13px;margin:10px 0}} td,th{{padding:3px 8px;border-bottom:1px solid #ddd;text-align:left}}
-tr.f td{{background:#fde8e4}} pre{{white-space:pre-wrap;background:#f3f4f6;padding:8px;border-radius:6px}} .hit{{color:#1e7a4a}} .miss{{color:#b23a2e}}
-summary{{cursor:pointer;padding:3px 0}}</style>
-<h1>Real examples (local only)</h1><p class=warn>Contains real CheXpert Plus images, CheXthought paths and reports under the
-research use agreement. Keep on this machine; never commit, upload or publish.</p>
-<p>Region colours: amber = trachea/hila/mediastinum, pink = heart, blues = lung thirds, green = diaphragm, grey = clavicles/spine, brown = abdomen.</p>
-{''.join(parts)}"""
+    order = [k for st in ("search", "tracing", "sparse") for k in [(st, "finding", True), (st, "finding", False), (st, "normal", True), (st, "normal", False)]]
+    picks = [s for k in order for s in by.get(k, [])][: a.n]
+    ex = [build_example(s, hints[s["image_id"]], b, fp["params"], models) for s in picks]
     out = OUT / "examples/examples.html"
     out.parent.mkdir(exist_ok=True)
-    out.write_text(page)
-    print("wrote", out, len(picks), "examples")
+    out.write_text(TEMPLATE.read_text().replace("__DATA__", json.dumps(ex).replace("</", "<\\/")))
+    print("wrote", out, len(ex), "examples", round(out.stat().st_size / 1e6, 1), "MB")
 
 
 if __name__ == "__main__":

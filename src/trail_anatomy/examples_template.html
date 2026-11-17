@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real Path Examples</title>
+<!-- Filled by src/trail_anatomy/examples.py. The filled page holds real images and reports (research use agreement): local only. -->
+<style>
+:root { --bg: #f7f8fa; --panel: #fff; --fg: #15191f; --muted: #545c68; --line: #dde1e7; --accent: #1d5fa8; --accent-soft: #e4edf7;
+  --hit: #1e7a4a; --hit-soft: #e2f3e9; --miss: #b23a2e; --miss-soft: #f8e6e3; --film: #0e1116; }
+@media (prefers-color-scheme: dark) { :root { --bg: #12151a; --panel: #1a1e24; --fg: #e8ebef; --muted: #a8b0bb; --line: #2c323a;
+  --accent: #7fb0ea; --accent-soft: #1c2a3b; --hit: #5cc28b; --hit-soft: #17301f; --miss: #f08a7e; --miss-soft: #3a2220; color-scheme: dark } }
+body { background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, sans-serif; margin: 0; }
+.wrap { max-width: 78rem; margin: 0 auto; padding: 1.5rem 16px 4rem; display: grid; gap: 1.2rem; }
+h1 { font: 650 1.8rem Georgia, serif; margin: 0; } h2 { font: 650 1.2rem Georgia, serif; margin: 0; }
+.warn { background: var(--miss-soft); border-radius: 8px; padding: .6rem .9rem; font-size: .9rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chips button { font: 600 .82rem system-ui; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 999px; padding: .3rem .8rem; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 1.2rem; align-items: start; }
+@media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.film { background: var(--film); border-radius: 10px; overflow: hidden; position: relative; }
+.film img { display: block; width: 100%; height: auto; }
+.film .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+.meta { font-size: .9rem; color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; display: grid; gap: .7rem; min-width: 0; }
+.hint { background: var(--accent-soft); border-radius: 8px; padding: .7rem .9rem; font-size: .9rem; overflow-wrap: anywhere; max-height: 9rem; overflow: auto; }
+.rep { border-top: 1px solid var(--line); padding-top: .6rem; display: grid; gap: .35rem; }
+.rep b.m { text-transform: uppercase; font-size: .75rem; letter-spacing: .06em; color: var(--muted); }
+.rep p { margin: 0; white-space: pre-wrap; font-size: .9rem; }
+.tag { display: inline-block; font-size: .75rem; font-weight: 600; padding: .05rem .45rem; border-radius: 999px; margin: .1rem .15rem 0 0; }
+.tag.hit { background: var(--hit-soft); color: var(--hit); } .tag.fp { background: var(--miss-soft); color: var(--miss); }
+.tag.missed { border: 1px dashed var(--miss); color: var(--miss); }
+table { border-collapse: collapse; width: 100%; font-size: .82rem; } td, th { padding: .25rem .45rem; border-bottom: 1px solid var(--line); text-align: left; }
+td.r { text-align: right; font-variant-numeric: tabular-nums; } tr.f td { background: var(--miss-soft); }
+details summary { cursor: pointer; font-weight: 600; }
+.legend { font-size: .82rem; color: var(--muted); }
+</style>
+<div class="wrap">
+  <header style="display:grid;gap:.5rem">
+    <h1>Real path examples</h1>
+    <div class="warn">Real CheXpert Plus images, CheXthought paths and reports (research use agreement). Keep this file on this machine.</div>
+    <div class="legend">Pick an X-ray, then a hint. The picture shows what that hint refers to; for outlined-image hints it shows exactly the two images the model saw. Tags: <span class="tag hit">real finding caught</span> <span class="tag fp">false finding</span> <span class="tag missed">real finding missed</span></div>
+  </header>
+  <div class="chips" id="ex"></div>
+  <div class="meta" id="exmeta"></div>
+  <div class="grid">
+    <div style="display:grid;gap:.6rem;min-width:0">
+      <div class="chips" id="views"></div>
+      <div class="film" id="film"></div>
+      <div class="meta" id="filmcap"></div>
+      <details class="panel"><summary>Dots per area (the filter)</summary><table id="tbl"></table></details>
+      <details class="panel"><summary>Real radiologist report</summary><p id="realrep" style="white-space:pre-wrap;margin:0"></p></details>
+    </div>
+    <div class="panel">
+      <div class="chips" id="conds"></div>
+      <h2 id="condname"></h2>
+      <div class="hint" id="hint"></div>
+      <div id="reps"></div>
+    </div>
+  </div>
+</div>
+<script>
+const EX = __DATA__;
+let ei = 0, ci = 3, view = "auto";
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const IMGKEY = { focus_text_own: "focus_own", focus_text_own_assist: "focus_own", focus_mask_own: "focus_own", focus_text_other: "focus_other", focus_mask_other: "focus_other", focus_text_random: "focus_random", report_regions: "report_regions", coords_own: "dots" };
+function chips(el, items, active, onpick) { el.innerHTML = ""; items.forEach((t, k) => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; b.setAttribute("aria-pressed", k === active); b.onclick = () => onpick(k); el.appendChild(b); }); }
+function render() {
+  const e = EX[ei], c = e.conds[ci];
+  chips($("ex"), EX.map((x, k) => `${k + 1}. ${x.style}${x.group === "normal" ? " · normal" : ""}${x.focus.length ? "" : " · no focus"}`), ei, k => { ei = k; render(); });
+  $("exmeta").innerHTML = `<b>${e.style}</b> path, ${e.n} dots · real findings: <b>${e.ref.join(", ") || "none (normal)"}</b> · focus areas: <b>${e.focus.join(", ") || "none (spread evenly)"}</b>`;
+  chips($("conds"), e.conds.map(x => x.name), ci, k => { ci = k; view = "auto"; render(); });
+  const auto = IMGKEY[c.id] || "plain";
+  const views = [["auto", "Matches hint"], ["plain", "X-ray"], ["dots", "Raw dots"], ["seg", "Segmentation + dots"]];
+  chips($("views"), views.map(v => v[1]), views.findIndex(v => v[0] === view), k => { view = views[k][0]; render(); });
+  const key = view === "auto" ? auto : view;
+  const isMask = view === "auto" && c.id.startsWith("focus_mask") && c.regions.length;
+  $("film").innerHTML = isMask ? `<div class="pair"><img src="${e.imgs.plain}" alt="X-ray"><img src="${e.imgs[key]}" alt="X-ray with outlined areas"></div>` : `<img src="${e.imgs[key]}" alt="X-ray">`;
+  $("filmcap").textContent = isMask ? "What the model saw: the clean X-ray and a copy with the areas outlined in red." :
+    key === "dots" ? "The radiologist's raw clicks, in order." : key === "seg" ? "CXAS areas: amber = airway/center, pink = heart, blues = lung thirds, green = diaphragm, grey = bones, brown = abdomen." :
+    c.regions.length && view === "auto" ? `Red outline: ${c.regions.join(", ")} (the model got these as text, not as a picture).` : "The X-ray as the model saw it.";
+  $("tbl").innerHTML = "<tr><th>Area</th><th>Dots</th><th>This path</th><th>Average</th><th>Adjusted</th></tr>" + e.table.map(r => `<tr class="${e.focus.includes(r.r) ? "f" : ""}"><td>${r.r}</td><td class="r">${r.c}</td><td class="r">${Math.round(r.share * 100)}%</td><td class="r">${(r.b * 100).toFixed(1)}%</td><td class="r">${r.e.toFixed(2)}×</td></tr>`).join("");
+  $("realrep").textContent = e.report;
+  $("condname").textContent = c.name;
+  $("hint").innerHTML = c.hint ? esc(c.hint) : "<i>No hint: just the X-ray and the instruction.</i>";
+  $("reps").innerHTML = c.reports.map(r => {
+    const calls = r.calls || [];
+    const tags = calls.map(f => `<span class="tag ${e.ref.includes(f) ? "hit" : "fp"}">${f}</span>`).join("") + e.ref.filter(f => !calls.includes(f)).map(f => `<span class="tag missed">${f}</span>`).join("");
+    return `<div class="rep"><b class="m">${r.model}${r.trunc ? " · ran out of space" : ""}</b><div>${tags || "<span class='meta'>no findings called</span>"}</div><p>${esc(r.report)}</p></div>`;
+  }).join("") || "<p class='meta'>No reports for this hint yet.</p>";
+}
+render();
+</script>
